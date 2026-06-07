@@ -10,6 +10,8 @@ export interface RunConfig {
   mode: GameMode;
   seed: string;
   progressTarget: number;
+  progressPerTurn: number;
+  spawnsPerTurn: number;
   title: string;
   subtitle: string;
 }
@@ -29,9 +31,12 @@ export interface Tile {
 
 export interface BoardState {
   size: number;
+  mode: GameMode;
   turn: number;
   progress: number;
   maxProgress: number;
+  progressPerTurn: number;
+  spawnsPerTurn: number;
   xp: number;
   gold: number;
   status: RunStatus;

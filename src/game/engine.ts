@@ -1,9 +1,21 @@
 import { hashString, mulberry32 } from './random';
-import type { BoardState, Direction, SlideResult, Tile, TileKind } from './types';
+import type { BoardState, Direction, GameMode, RunConfig, SlideResult, Tile, TileKind } from './types';
 
 const BOARD_SIZE = 5;
 
-export function createInitialBoard(seed: string): BoardState {
+const DEFAULT_PROGRESS_PER_TURN: Record<GameMode, number> = {
+  quest: 8,
+  daily: 8,
+  endless: 0
+};
+
+const DEFAULT_SPAWNS_PER_TURN: Record<GameMode, number> = {
+  quest: 1,
+  daily: 1,
+  endless: 2
+};
+
+export function createInitialBoard(seed: string, mode: GameMode = 'daily'): BoardState {
   const random = mulberry32(hashString(seed));
   const tiles: Tile[] = [];
 
@@ -32,9 +44,12 @@ export function createInitialBoard(seed: string): BoardState {
 
   return {
     size: BOARD_SIZE,
+    mode,
     turn: 0,
     progress: 0,
     maxProgress: 100,
+    progressPerTurn: DEFAULT_PROGRESS_PER_TURN[mode],
+    spawnsPerTurn: DEFAULT_SPAWNS_PER_TURN[mode],
     xp: 0,
     gold: 0,
     status: 'playing',
@@ -120,13 +135,13 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
 
   board.tiles = [...nextTiles.values()];
   board.turn += 1;
-  board.progress = Math.min(board.maxProgress, board.progress + 8);
+  board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
 
   if (board.status === 'playing') {
-    spawnTurnTile(board);
+    spawnTurnTiles(board);
   }
 
-  if (board.progress >= board.maxProgress && board.status === 'playing') {
+  if (board.mode !== 'endless' && board.progress >= board.maxProgress && board.status === 'playing') {
     board.status = 'victory';
   }
 
@@ -299,15 +314,18 @@ function goldForTarget(kind: TileKind): number {
   return kind === 'gold' ? 1 : 0;
 }
 
-function spawnTurnTile(board: BoardState): void {
+function spawnTurnTiles(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:${board.turn}:spawn`));
   const spawnKinds: TileKind[] = ['goblin', 'goblin', 'spider', 'rock', 'web', 'gold'];
-  const kind = spawnKinds[Math.floor(random() * spawnKinds.length)];
-  const position = pickEmptyCell(board.tiles, random);
 
-  if (!position) {
-    return;
+  for (let index = 0; index < board.spawnsPerTurn; index += 1) {
+    const kind = spawnKinds[Math.floor(random() * spawnKinds.length)];
+    const position = pickEmptyCell(board.tiles, random);
+
+    if (!position) {
+      return;
+    }
+
+    board.tiles.push(createTile(kind, position.x, position.y, board.turn + board.tiles.length + index));
   }
-
-  board.tiles.push(createTile(kind, position.x, position.y, board.turn + board.tiles.length));
 }

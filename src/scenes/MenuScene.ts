@@ -35,23 +35,29 @@ export class MenuScene extends Phaser.Scene {
         title: 'Quest Mode',
         subtitle: 'Standard campaign progression with staged biomes and boss floors.',
         seed: 'quest:chapter-1',
-        progressTarget: 100
+        progressTarget: 120,
+        progressPerTurn: 7,
+        spawnsPerTurn: 1
       },
       {
         mode: 'daily',
         title: 'Daily Run',
         subtitle: 'Everyone shares the same seed for the day.',
         seed: `daily:${dailySeed()}`,
-        progressTarget: 100
+        progressTarget: 100,
+        progressPerTurn: 8,
+        spawnsPerTurn: 1
       },
       {
         mode: 'endless',
         title: 'Endless Arena',
         subtitle: 'Survive as long as you can while the board keeps crowding in.',
         seed: 'endless:arena',
-        progressTarget: 9999
+        progressTarget: 9999,
+        progressPerTurn: 0,
+        spawnsPerTurn: 2
       }
-    ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number }>;
+    ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number }>;
 
     const panelTop = 280;
 

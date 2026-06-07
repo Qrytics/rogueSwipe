@@ -15,6 +15,8 @@ export class GameScene extends Phaser.Scene {
     mode: 'daily',
     seed: dailySeed(),
     progressTarget: 100,
+    progressPerTurn: 8,
+    spawnsPerTurn: 1,
     title: 'Daily Run',
     subtitle: 'Generated from the current date.'
   };
@@ -33,9 +35,12 @@ export class GameScene extends Phaser.Scene {
 
     if (config) {
       this.runConfig = config;
-      this.board = createInitialBoard(config.seed);
+      this.board = createInitialBoard(config.seed, config.mode);
       this.board.maxProgress = config.progressTarget;
       this.board.seed = config.seed;
+      this.board.progressPerTurn = config.progressPerTurn;
+      this.board.spawnsPerTurn = config.spawnsPerTurn;
+      this.board.mode = config.mode;
     }
 
     this.cameras.main.setBackgroundColor('#08131c');
