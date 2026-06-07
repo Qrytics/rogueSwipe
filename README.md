@@ -26,6 +26,8 @@ npm run dev
 npm run build
 ```
 
+The production build is configured to work from `/games/rogueSwipe/`, so the generated assets load correctly when the game is hosted at `https://www.mario-belmonte.com/games/rogueSwipe`.
+
 ## Optional cloud sync
 
 Set these environment variables to enable browser-to-Supabase meta progression sync:
