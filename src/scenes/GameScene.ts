@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
-import { createInitialBoard, slideBoard, useBackpackSpell } from '../game/engine';
+import { createInitialBoardWithBonuses, slideBoard, useBackpackSpell } from '../game/engine';
 import { dailySeed } from '../game/random';
-import type { Direction, RunConfig, Tile } from '../game/types';
+import { clearActiveRun, loadMetaProgress, recordRunCompletion, saveActiveRun } from '../game/persistence';
+import type { Direction, PersistentProgress, RunConfig, RunSnapshot, Tile } from '../game/types';
 
 const BOARD_SIZE = 5;
 const BOARD_LEFT = 84;
@@ -10,7 +11,7 @@ const CELL_SIZE = 116;
 const CELL_GAP = 6;
 
 export class GameScene extends Phaser.Scene {
-  private board = createInitialBoard(dailySeed());
+  private board = createInitialBoardWithBonuses(dailySeed());
   private runConfig: RunConfig = {
     mode: 'daily',
     seed: dailySeed(),
@@ -26,25 +27,42 @@ export class GameScene extends Phaser.Scene {
   private spellButton!: Phaser.GameObjects.Text;
   private tileTexts: Phaser.GameObjects.Text[] = [];
   private endOverlayShown = false;
+  private runFinalized = false;
   private swipeStart: { x: number; y: number } | null = null;
   private lastActionMessage = '';
+  private metaProgress: PersistentProgress = loadMetaProgress();
 
   constructor() {
     super('GameScene');
   }
 
   create(): void {
+    const resumeRun = this.data.get('resumeRun') as RunSnapshot | undefined;
     const config = this.data.get('runConfig') as RunConfig | undefined;
+    const metaProgress = this.data.get('metaProgress') as PersistentProgress | undefined;
 
-    if (config) {
+    if (metaProgress) {
+      this.metaProgress = metaProgress;
+    }
+
+    if (resumeRun) {
+      this.applyRunSnapshot(resumeRun);
+    } else if (config) {
       this.runConfig = config;
-      this.board = createInitialBoard(config.seed, config.mode);
+      this.board = createInitialBoardWithBonuses(
+        config.seed,
+        config.mode,
+        this.metaProgress.permanentMaxHpBonus,
+        this.metaProgress.permanentAttackBonus
+      );
       this.board.maxProgress = config.progressTarget;
       this.board.seed = config.seed;
       this.board.progressPerTurn = config.progressPerTurn;
       this.board.spawnsPerTurn = config.spawnsPerTurn;
       this.board.mode = config.mode;
       this.board.bossMaxHp = config.bossHp;
+      this.runFinalized = false;
+      this.lastActionMessage = '';
     }
 
     this.cameras.main.setBackgroundColor('#08131c');
@@ -84,6 +102,7 @@ export class GameScene extends Phaser.Scene {
     this.setupInput();
     this.renderBoard();
     this.refreshUi();
+    this.persistRun();
   }
 
   private setupInput(): void {
@@ -139,6 +158,7 @@ export class GameScene extends Phaser.Scene {
 
     if (result.moved || result.combatLog.length > 0) {
       this.lastActionMessage = result.combatLog[0] ?? this.lastActionMessage;
+      this.persistRun();
       this.renderBoard();
       this.refreshUi(result.combatLog);
     }
@@ -159,6 +179,7 @@ export class GameScene extends Phaser.Scene {
 
       if (result.used) {
         this.lastActionMessage = result.message;
+        this.persistRun();
         this.renderBoard();
         this.refreshUi([result.message]);
       }
@@ -330,6 +351,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.endOverlayShown = true;
+    this.finalizeRun();
     const overlay = this.add.rectangle(384, 650, 640, 420, 0x000000, 0.72);
     const panel = this.add.rectangle(384, 650, 540, 290, 0xd7def0, 1);
 
@@ -368,5 +390,39 @@ export class GameScene extends Phaser.Scene {
     overlay.setDepth(10);
     panel.setDepth(11);
     menuButton.setDepth(12);
+  }
+
+  private persistRun(): void {
+    if (this.board.status !== 'playing') {
+      return;
+    }
+
+    saveActiveRun({
+      board: this.cloneBoardState(this.board),
+      runConfig: this.runConfig,
+      lastActionMessage: this.lastActionMessage,
+      savedAt: new Date().toISOString()
+    });
+  }
+
+  private finalizeRun(): void {
+    if (this.runFinalized) {
+      return;
+    }
+
+    this.runFinalized = true;
+    recordRunCompletion(this.board.turn, this.board.gold, this.board.status === 'victory');
+    clearActiveRun();
+  }
+
+  private applyRunSnapshot(snapshot: RunSnapshot): void {
+    this.runConfig = snapshot.runConfig;
+    this.board = this.cloneBoardState(snapshot.board);
+    this.lastActionMessage = snapshot.lastActionMessage;
+    this.runFinalized = false;
+  }
+
+  private cloneBoardState(boardState: typeof this.board): typeof this.board {
+    return JSON.parse(JSON.stringify(boardState)) as typeof this.board;
   }
 }

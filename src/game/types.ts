@@ -17,6 +17,26 @@ export interface RunConfig {
   subtitle: string;
 }
 
+export interface PersistentProgress {
+  bankedGold: number;
+  completedRuns: number;
+  bestTurnsSurvived: number;
+  permanentMaxHpBonus: number;
+  permanentAttackBonus: number;
+}
+
+export interface RunSnapshot {
+  board: BoardState;
+  runConfig: RunConfig;
+  lastActionMessage: string;
+  savedAt: string;
+}
+
+export interface SaveData {
+  meta: PersistentProgress;
+  activeRun: RunSnapshot | null;
+}
+
 export type RunPhase = 'run' | 'boss';
 
 export interface Tile {

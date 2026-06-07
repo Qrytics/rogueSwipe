@@ -16,6 +16,10 @@ const DEFAULT_SPAWNS_PER_TURN: Record<GameMode, number> = {
 };
 
 export function createInitialBoard(seed: string, mode: GameMode = 'daily'): BoardState {
+  return createInitialBoardWithBonuses(seed, mode, 0, 0);
+}
+
+export function createInitialBoardWithBonuses(seed: string, mode: GameMode = 'daily', maxHpBonus = 0, attackBonus = 0): BoardState {
   const random = mulberry32(hashString(seed));
   const tiles: Tile[] = [];
 
@@ -24,8 +28,8 @@ export function createInitialBoard(seed: string, mode: GameMode = 'daily'): Boar
     kind: 'hero',
     x: 2,
     y: 2,
-    hp: 5,
-    attack: 1,
+    hp: 5 + maxHpBonus,
+    attack: 1 + attackBonus,
     block: 0,
     blocksMovement: false,
     immovable: false

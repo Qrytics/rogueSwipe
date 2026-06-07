@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { dailySeed } from '../game/random';
+import { loadActiveRun, loadMetaProgress } from '../game/persistence';
 import type { GameMode, RunConfig } from '../game/types';
 
 const MENU_WIDTH = 768;
@@ -11,6 +12,9 @@ export class MenuScene extends Phaser.Scene {
   }
 
   create(): void {
+    const meta = loadMetaProgress();
+    const activeRun = loadActiveRun();
+
     this.cameras.main.setBackgroundColor('#08131c');
 
     this.add.text(MENU_WIDTH / 2, 90, 'Rogue Swipe', {
@@ -28,6 +32,26 @@ export class MenuScene extends Phaser.Scene {
       align: 'center',
       wordWrap: { width: 560 }
     }).setOrigin(0.5);
+
+    this.add.text(MENU_WIDTH / 2, 210, `Vault Gold ${meta.bankedGold}   Best Run ${meta.bestTurnsSurvived} turns`, {
+      fontFamily: 'Georgia, serif',
+      fontSize: '18px',
+      color: '#d8e4f7'
+    }).setOrigin(0.5);
+
+    if (activeRun) {
+      const resumeButton = this.add.text(MENU_WIDTH / 2, 252, `Resume ${activeRun.runConfig.title}  Turn ${activeRun.board.turn}`, {
+        fontFamily: 'Georgia, serif',
+        fontSize: '20px',
+        color: '#18311f',
+        backgroundColor: '#c7e3d1',
+        padding: { left: 18, right: 18, top: 12, bottom: 12 }
+      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+      resumeButton.on('pointerdown', () => {
+        this.scene.start('GameScene', { resumeRun: activeRun });
+      });
+    }
 
     const options = [
       {
@@ -87,7 +111,10 @@ export class MenuScene extends Phaser.Scene {
 
       const hitArea = this.add.zone(MENU_WIDTH / 2, y, 610, 170).setInteractive({ useHandCursor: true });
       hitArea.on('pointerdown', () => {
-        this.scene.start('GameScene', option as RunConfig);
+        this.scene.start('GameScene', {
+          runConfig: option as RunConfig,
+          metaProgress: meta
+        });
       });
 
       hitArea.on('pointerover', () => {
