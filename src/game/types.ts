@@ -1,6 +1,6 @@
 export type Direction = 'up' | 'down' | 'left' | 'right';
 
-export type TileKind = 'hero' | 'goblin' | 'spider' | 'rock' | 'web' | 'gold';
+export type TileKind = 'hero' | 'goblin' | 'spider' | 'rock' | 'web' | 'gold' | 'boss';
 
 export type RunStatus = 'playing' | 'victory' | 'defeat';
 
@@ -12,9 +12,12 @@ export interface RunConfig {
   progressTarget: number;
   progressPerTurn: number;
   spawnsPerTurn: number;
+  bossHp: number;
   title: string;
   subtitle: string;
 }
+
+export type RunPhase = 'run' | 'boss';
 
 export interface Tile {
   id: string;
@@ -32,11 +35,14 @@ export interface Tile {
 export interface BoardState {
   size: number;
   mode: GameMode;
+  phase: RunPhase;
   turn: number;
   progress: number;
   maxProgress: number;
   progressPerTurn: number;
   spawnsPerTurn: number;
+  bossHp: number;
+  bossMaxHp: number;
   xp: number;
   gold: number;
   status: RunStatus;

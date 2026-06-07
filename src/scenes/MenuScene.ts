@@ -33,11 +33,12 @@ export class MenuScene extends Phaser.Scene {
       {
         mode: 'quest',
         title: 'Quest Mode',
-        subtitle: 'Standard campaign progression with staged biomes and boss floors.',
+        subtitle: 'Standard campaign progression with a boss floor after the track fills.',
         seed: 'quest:chapter-1',
         progressTarget: 120,
         progressPerTurn: 7,
-        spawnsPerTurn: 1
+        spawnsPerTurn: 1,
+        bossHp: 12
       },
       {
         mode: 'daily',
@@ -46,7 +47,8 @@ export class MenuScene extends Phaser.Scene {
         seed: `daily:${dailySeed()}`,
         progressTarget: 100,
         progressPerTurn: 8,
-        spawnsPerTurn: 1
+        spawnsPerTurn: 1,
+        bossHp: 0
       },
       {
         mode: 'endless',
@@ -55,9 +57,10 @@ export class MenuScene extends Phaser.Scene {
         seed: 'endless:arena',
         progressTarget: 9999,
         progressPerTurn: 0,
-        spawnsPerTurn: 2
+        spawnsPerTurn: 2,
+        bossHp: 0
       }
-    ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number }>;
+    ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number; bossHp: number }>;
 
     const panelTop = 280;
 

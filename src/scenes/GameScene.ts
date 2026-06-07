@@ -17,6 +17,7 @@ export class GameScene extends Phaser.Scene {
     progressTarget: 100,
     progressPerTurn: 8,
     spawnsPerTurn: 1,
+    bossHp: 12,
     title: 'Daily Run',
     subtitle: 'Generated from the current date.'
   };
@@ -41,6 +42,7 @@ export class GameScene extends Phaser.Scene {
       this.board.progressPerTurn = config.progressPerTurn;
       this.board.spawnsPerTurn = config.spawnsPerTurn;
       this.board.mode = config.mode;
+      this.board.bossMaxHp = config.bossHp;
     }
 
     this.cameras.main.setBackgroundColor('#08131c');
@@ -139,13 +141,16 @@ export class GameScene extends Phaser.Scene {
 
   private refreshUi(combatLog: string[] = []): void {
     const progressWidth = 420;
-    const progress = Math.floor((this.board.progress / this.board.maxProgress) * 100);
+    const progress = this.board.phase === 'boss'
+      ? Math.floor((Math.max(0, this.board.bossHp) / Math.max(1, this.board.bossMaxHp)) * 100)
+      : Math.floor((this.board.progress / this.board.maxProgress) * 100);
     const hero = this.findHero();
+    const phaseLabel = this.board.phase === 'boss' ? `Boss HP ${this.board.bossHp}/${this.board.bossMaxHp}` : `Progress ${progress}%`;
 
     this.uiText.setText([
       `Turn ${this.board.turn}`,
       `HP ${hero?.hp ?? 0}   XP ${this.board.xp}/100   Gold ${this.board.gold}`,
-      `Progress ${progress}%`,
+      phaseLabel,
       combatLog[0] ?? ''
     ]);
 
@@ -250,6 +255,8 @@ export class GameScene extends Phaser.Scene {
         return { fill: 0x7f7f7f, stroke: 0xdedede, icon: 0xffffff };
       case 'gold':
         return { fill: 0xecc74a, stroke: 0xfff2b0, icon: 0xffd74a };
+      case 'boss':
+        return { fill: 0x8f5b5b, stroke: 0xffd2d2, icon: 0x421111 };
     }
   }
 

@@ -45,11 +45,14 @@ export function createInitialBoard(seed: string, mode: GameMode = 'daily'): Boar
   return {
     size: BOARD_SIZE,
     mode,
+    phase: 'run',
     turn: 0,
     progress: 0,
     maxProgress: 100,
     progressPerTurn: DEFAULT_PROGRESS_PER_TURN[mode],
     spawnsPerTurn: DEFAULT_SPAWNS_PER_TURN[mode],
+    bossHp: 0,
+    bossMaxHp: 0,
     xp: 0,
     gold: 0,
     status: 'playing',
@@ -135,13 +138,19 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
 
   board.tiles = [...nextTiles.values()];
   board.turn += 1;
-  board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
+  if (board.phase === 'run') {
+    board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
+  }
 
   if (board.status === 'playing') {
     spawnTurnTiles(board);
   }
 
-  if (board.mode !== 'endless' && board.progress >= board.maxProgress && board.status === 'playing') {
+  if (board.mode === 'quest' && board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
+    startBossEncounter(board);
+  }
+
+  if (board.phase === 'boss' && board.bossHp <= 0 && board.status === 'playing') {
     board.status = 'victory';
   }
 
@@ -222,6 +231,18 @@ function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
         blocksMovement: false,
         immovable: false,
         value: 1
+      };
+    case 'boss':
+      return {
+        id: `boss-${index}`,
+        kind,
+        x,
+        y,
+        hp: 12,
+        attack: 2,
+        block: 1,
+        blocksMovement: true,
+        immovable: false
       };
   }
 }
@@ -304,6 +325,7 @@ function xpForTarget(kind: TileKind): number {
       return 4;
     case 'gold':
     case 'web':
+    case 'boss':
       return 0;
     case 'hero':
       return 0;
@@ -328,4 +350,36 @@ function spawnTurnTiles(board: BoardState): void {
 
     board.tiles.push(createTile(kind, position.x, position.y, board.turn + board.tiles.length + index));
   }
+}
+
+function startBossEncounter(board: BoardState): void {
+  const random = mulberry32(hashString(`${board.seed}:boss`));
+  const bossHp = 12;
+  const bossPosition = pickEmptyCell(board.tiles, random) ?? findFallbackBossPosition(board.tiles);
+
+  board.phase = 'boss';
+  board.progress = 0;
+  board.bossHp = bossHp;
+  board.bossMaxHp = bossHp;
+
+  if (!bossPosition) {
+    board.status = 'victory';
+    return;
+  }
+
+  board.tiles.push(createTile('boss', bossPosition.x, bossPosition.y, board.turn + board.tiles.length + 99));
+}
+
+function findFallbackBossPosition(tiles: Tile[]): { x: number; y: number } | undefined {
+  for (let y = 0; y < BOARD_SIZE; y += 1) {
+    for (let x = 0; x < BOARD_SIZE; x += 1) {
+      const occupant = tiles.find((tile) => tile.x === x && tile.y === y && tile.kind !== 'hero');
+
+      if (occupant) {
+        return { x, y };
+      }
+    }
+  }
+
+  return undefined;
 }
