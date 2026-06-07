@@ -1,2 +1,33 @@
 # rogueSwipe
-Roguelike game that uses the same mechanics as the game 2048. 
+
+RogueSwipe is a mobile-first roguelike prototype built with TypeScript and Phaser 3.
+
+## Current state
+
+The first playable slice is in place:
+
+- 5x5 grid board
+- swipe and keyboard input
+- deterministic daily seed generation
+- basic combat, gold collection, and turn-based spawning
+- progress bar, HP, XP, and gold HUD
+- victory and defeat overlays
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+## Build
+
+```bash
+npm run build
+```
+
+## Next steps
+
+- add the menu and mode selection flow
+- expand the board engine into full enemy, obstacle, and spell systems
+- wire persistence and leaderboard submission with Supabase
