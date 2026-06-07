@@ -48,6 +48,9 @@ export function createInitialBoard(seed: string, mode: GameMode = 'daily'): Boar
     phase: 'run',
     turn: 0,
     bossTurnsElapsed: 0,
+    bossAttackCountdown: 0,
+    bossAttackAxis: 'row',
+    bossAttackLine: 0,
     progress: 0,
     maxProgress: 100,
     progressPerTurn: DEFAULT_PROGRESS_PER_TURN[mode],
@@ -158,10 +161,12 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
 
   if (board.phase === 'boss' && board.status === 'playing') {
     board.bossTurnsElapsed += 1;
+    board.bossAttackCountdown -= 1;
 
-    if (board.bossTurnsElapsed % 4 === 0) {
+    if (board.bossAttackCountdown <= 0) {
       bossWeaveAttack(board, nextTiles);
       board.tiles = [...nextTiles.values()];
+      scheduleBossAttack(board);
     }
   }
 
@@ -378,6 +383,7 @@ function startBossEncounter(board: BoardState): void {
 
   board.phase = 'boss';
   board.bossTurnsElapsed = 0;
+  scheduleBossAttack(board, random);
   board.progress = 0;
   board.bossHp = bossHp;
   board.bossMaxHp = bossHp;
@@ -390,6 +396,12 @@ function startBossEncounter(board: BoardState): void {
   board.tiles.push(createTile('boss', bossPosition.x, bossPosition.y, board.turn + board.tiles.length + 99));
 }
 
+function scheduleBossAttack(board: BoardState, random: () => number = mulberry32(hashString(`${board.seed}:boss-schedule:${board.turn}`))): void {
+  board.bossAttackCountdown = 4;
+  board.bossAttackAxis = random() > 0.5 ? 'row' : 'column';
+  board.bossAttackLine = Math.floor(random() * BOARD_SIZE);
+}
+
 function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
   const boss = [...tiles.values()].find((tile) => tile.kind === 'boss');
   const hero = [...tiles.values()].find((tile) => tile.kind === 'hero');
@@ -398,9 +410,8 @@ function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
     return;
   }
 
-  const random = mulberry32(hashString(`${board.seed}:${board.turn}:boss-weave`));
-  const attackIsRow = random() > 0.5;
-  const energyLine = attackIsRow ? boss.y : boss.x;
+  const attackIsRow = board.bossAttackAxis === 'row';
+  const energyLine = board.bossAttackLine;
 
   if (hero && ((attackIsRow && hero.y === energyLine) || (!attackIsRow && hero.x === energyLine))) {
     hero.hp -= 2;

@@ -146,11 +146,15 @@ export class GameScene extends Phaser.Scene {
       : Math.floor((this.board.progress / this.board.maxProgress) * 100);
     const hero = this.findHero();
     const phaseLabel = this.board.phase === 'boss' ? `Boss HP ${this.board.bossHp}/${this.board.bossMaxHp}` : `Progress ${progress}%`;
+    const bossTelegraph = this.board.phase === 'boss'
+      ? `Stone-Weaver ${this.board.bossAttackCountdown <= 1 ? 'strikes next' : `charges ${this.board.bossAttackCountdown}`}`
+      : '';
 
     this.uiText.setText([
       `Turn ${this.board.turn}`,
       `HP ${hero?.hp ?? 0}   XP ${this.board.xp}/100   Gold ${this.board.gold}`,
       phaseLabel,
+      bossTelegraph,
       combatLog[0] ?? ''
     ]);
 
@@ -180,9 +184,27 @@ export class GameScene extends Phaser.Scene {
     this.clearTileTexts();
     this.tileGraphics.clear();
     this.drawBoardBackground();
+    this.drawBossTelegraph();
 
     for (const tile of this.board.tiles) {
       this.drawTile(tile);
+    }
+  }
+
+  private drawBossTelegraph(): void {
+    if (this.board.phase !== 'boss' || this.board.status !== 'playing') {
+      return;
+    }
+
+    const highlightColor = this.board.bossAttackCountdown <= 1 ? 0xff6a6a : 0xffc46a;
+    this.tileGraphics.lineStyle(8, highlightColor, 0.45);
+
+    for (let index = 0; index < BOARD_SIZE; index += 1) {
+      const x = this.board.bossAttackAxis === 'column' ? this.board.bossAttackLine : index;
+      const y = this.board.bossAttackAxis === 'row' ? this.board.bossAttackLine : index;
+      const position = this.cellToWorld(x, y);
+
+      this.tileGraphics.strokeRoundedRect(position.x - 2, position.y - 2, CELL_SIZE + 4, CELL_SIZE + 4, 12);
     }
   }
 

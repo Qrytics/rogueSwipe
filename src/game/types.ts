@@ -38,6 +38,9 @@ export interface BoardState {
   phase: RunPhase;
   turn: number;
   bossTurnsElapsed: number;
+  bossAttackCountdown: number;
+  bossAttackAxis: 'row' | 'column';
+  bossAttackLine: number;
   progress: number;
   maxProgress: number;
   progressPerTurn: number;
