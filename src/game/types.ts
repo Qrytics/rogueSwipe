@@ -48,6 +48,10 @@ export interface BoardState {
   bossHp: number;
   bossMaxHp: number;
   xp: number;
+  heroLevel: number;
+  heroMaxHp: number;
+  spellCharges: number;
+  spellMaxCharges: number;
   gold: number;
   status: RunStatus;
   seed: string;
@@ -57,4 +61,9 @@ export interface BoardState {
 export interface SlideResult {
   moved: boolean;
   combatLog: string[];
+}
+
+export interface SpellResult {
+  used: boolean;
+  message: string;
 }

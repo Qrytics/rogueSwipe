@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { createInitialBoard, slideBoard } from '../game/engine';
+import { createInitialBoard, slideBoard, useBackpackSpell } from '../game/engine';
 import { dailySeed } from '../game/random';
 import type { Direction, RunConfig, Tile } from '../game/types';
 
@@ -23,9 +23,11 @@ export class GameScene extends Phaser.Scene {
   };
   private tileGraphics!: Phaser.GameObjects.Graphics;
   private uiText!: Phaser.GameObjects.Text;
+  private spellButton!: Phaser.GameObjects.Text;
   private tileTexts: Phaser.GameObjects.Text[] = [];
   private endOverlayShown = false;
   private swipeStart: { x: number; y: number } | null = null;
+  private lastActionMessage = '';
 
   constructor() {
     super('GameScene');
@@ -76,6 +78,8 @@ export class GameScene extends Phaser.Scene {
       fontSize: '18px',
       color: '#8aa0b9'
     }).setOrigin(0.5);
+
+    this.createSpellButton();
 
     this.setupInput();
     this.renderBoard();
@@ -134,9 +138,31 @@ export class GameScene extends Phaser.Scene {
     const result = slideBoard(this.board, direction);
 
     if (result.moved || result.combatLog.length > 0) {
+      this.lastActionMessage = result.combatLog[0] ?? this.lastActionMessage;
       this.renderBoard();
       this.refreshUi(result.combatLog);
     }
+  }
+
+  private createSpellButton(): void {
+    this.spellButton = this.add.text(620, 1260, 'Backpack\nFireball x1', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '20px',
+      color: '#143b1f',
+      backgroundColor: '#c7e3d1',
+      align: 'center',
+      padding: { left: 18, right: 18, top: 14, bottom: 14 }
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    this.spellButton.on('pointerdown', () => {
+      const result = useBackpackSpell(this.board);
+
+      if (result.used) {
+        this.lastActionMessage = result.message;
+        this.renderBoard();
+        this.refreshUi([result.message]);
+      }
+    });
   }
 
   private refreshUi(combatLog: string[] = []): void {
@@ -149,14 +175,19 @@ export class GameScene extends Phaser.Scene {
     const bossTelegraph = this.board.phase === 'boss'
       ? `Stone-Weaver ${this.board.bossAttackCountdown <= 1 ? 'strikes next' : `charges ${this.board.bossAttackCountdown}`}`
       : '';
+    const actionLine = combatLog[0] ?? this.lastActionMessage;
 
     this.uiText.setText([
       `Turn ${this.board.turn}`,
-      `HP ${hero?.hp ?? 0}   XP ${this.board.xp}/100   Gold ${this.board.gold}`,
+      `Lvl ${this.board.heroLevel}   HP ${hero?.hp ?? 0}/${this.board.heroMaxHp}   XP ${this.board.xp}/100   Gold ${this.board.gold}`,
       phaseLabel,
+      `Backpack charges ${this.board.spellCharges}/${this.board.spellMaxCharges}`,
       bossTelegraph,
-      combatLog[0] ?? ''
+      actionLine
     ]);
+
+    this.spellButton.setText(`Backpack\nFireball x${this.board.spellCharges}`);
+    this.spellButton.setAlpha(this.board.spellCharges > 0 ? 1 : 0.45);
 
     this.addExistingProgressBar(progressWidth, progress);
 

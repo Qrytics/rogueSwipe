@@ -1,5 +1,5 @@
 import { hashString, mulberry32 } from './random';
-import type { BoardState, Direction, GameMode, RunConfig, SlideResult, Tile, TileKind } from './types';
+import type { BoardState, Direction, GameMode, RunConfig, SlideResult, SpellResult, Tile, TileKind } from './types';
 
 const BOARD_SIZE = 5;
 
@@ -58,6 +58,10 @@ export function createInitialBoard(seed: string, mode: GameMode = 'daily'): Boar
     bossHp: 0,
     bossMaxHp: 0,
     xp: 0,
+    heroLevel: 1,
+    heroMaxHp: hero.hp,
+    spellCharges: 1,
+    spellMaxCharges: 3,
     gold: 0,
     status: 'playing',
     seed,
@@ -126,6 +130,8 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
             if (occupant.kind === 'boss') {
               board.bossHp = 0;
             }
+
+            applyLevelUps(board, current);
 
             destinationX = candidate.x;
             destinationY = candidate.y;
@@ -360,6 +366,53 @@ function goldForTarget(kind: TileKind): number {
   return kind === 'gold' ? 1 : 0;
 }
 
+export function useBackpackSpell(board: BoardState): SpellResult {
+  if (board.status !== 'playing') {
+    return { used: false, message: 'You cannot use a spell right now.' };
+  }
+
+  if (board.spellCharges <= 0) {
+    return { used: false, message: 'No spell charges left.' };
+  }
+
+  const hero = board.tiles.find((tile) => tile.kind === 'hero');
+
+  if (!hero) {
+    return { used: false, message: 'No hero found.' };
+  }
+
+  board.spellCharges -= 1;
+
+  const target = findSpellTarget(board, hero);
+
+  if (target) {
+    if (target.kind === 'boss') {
+      target.hp -= 3;
+      board.bossHp = Math.max(0, target.hp);
+      if (target.hp <= 0) {
+        board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
+        return { used: true, message: 'Fireball scorched the boss.' };
+      }
+
+      return { used: true, message: 'Fireball hit the boss.' };
+    }
+
+    const damage = 999;
+    target.hp -= damage;
+
+    if (target.hp <= 0) {
+      board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
+      board.xp += xpForTarget(target.kind);
+      board.gold += goldForTarget(target.kind);
+      applyLevelUps(board, hero);
+      return { used: true, message: `Fireball destroyed the ${target.kind}.` };
+    }
+  }
+
+  hero.hp = Math.min(board.heroMaxHp, hero.hp + 2);
+  return { used: true, message: 'Fireball restored 2 HP.' };
+}
+
 function spawnTurnTiles(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:${board.turn}:spawn`));
   const spawnKinds: TileKind[] = ['goblin', 'goblin', 'spider', 'rock', 'web', 'gold'];
@@ -459,4 +512,47 @@ function findFallbackBossPosition(tiles: Tile[]): { x: number; y: number } | und
   }
 
   return undefined;
+}
+
+function findSpellTarget(board: BoardState, hero: Tile): Tile | undefined {
+  const directions: Direction[] = ['up', 'right', 'down', 'left'];
+
+  for (const direction of directions) {
+    let x = hero.x;
+    let y = hero.y;
+
+    while (true) {
+      const next = offset(x, y, direction);
+
+      if (!inBounds(next.x, next.y)) {
+        break;
+      }
+
+      const occupant = board.tiles.find((tile) => tile.id !== hero.id && tile.x === next.x && tile.y === next.y);
+
+      if (occupant) {
+        if (occupant.kind !== 'gold') {
+          return occupant;
+        }
+        break;
+      }
+
+      x = next.x;
+      y = next.y;
+    }
+  }
+
+  return undefined;
+}
+
+function applyLevelUps(board: BoardState, hero: Tile): void {
+  while (board.xp >= 100) {
+    board.xp -= 100;
+    board.heroLevel += 1;
+    board.heroMaxHp += 2;
+    hero.attack += 1;
+    hero.block += 1;
+    hero.hp = Math.min(board.heroMaxHp, hero.hp + 3);
+    board.spellCharges = Math.min(board.spellMaxCharges, board.spellCharges + 1);
+  }
 }
