@@ -47,6 +47,7 @@ export function createInitialBoard(seed: string, mode: GameMode = 'daily'): Boar
     mode,
     phase: 'run',
     turn: 0,
+    bossTurnsElapsed: 0,
     progress: 0,
     maxProgress: 100,
     progressPerTurn: DEFAULT_PROGRESS_PER_TURN[mode],
@@ -110,10 +111,19 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
 
           combatLog.push(combatOutcome.message);
 
+          if (occupant.kind === 'boss') {
+            board.bossHp = Math.max(0, occupant.hp);
+          }
+
           if (combatOutcome.targetDied) {
             nextTiles.delete(occupant.id);
             board.xp += xpForTarget(occupant.kind);
             board.gold += goldForTarget(occupant.kind);
+
+            if (occupant.kind === 'boss') {
+              board.bossHp = 0;
+            }
+
             destinationX = candidate.x;
             destinationY = candidate.y;
           }
@@ -144,6 +154,15 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
 
   if (board.status === 'playing') {
     spawnTurnTiles(board);
+  }
+
+  if (board.phase === 'boss' && board.status === 'playing') {
+    board.bossTurnsElapsed += 1;
+
+    if (board.bossTurnsElapsed % 4 === 0) {
+      bossWeaveAttack(board, nextTiles);
+      board.tiles = [...nextTiles.values()];
+    }
   }
 
   if (board.mode === 'quest' && board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
@@ -358,6 +377,7 @@ function startBossEncounter(board: BoardState): void {
   const bossPosition = pickEmptyCell(board.tiles, random) ?? findFallbackBossPosition(board.tiles);
 
   board.phase = 'boss';
+  board.bossTurnsElapsed = 0;
   board.progress = 0;
   board.bossHp = bossHp;
   board.bossMaxHp = bossHp;
@@ -368,6 +388,52 @@ function startBossEncounter(board: BoardState): void {
   }
 
   board.tiles.push(createTile('boss', bossPosition.x, bossPosition.y, board.turn + board.tiles.length + 99));
+}
+
+function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
+  const boss = [...tiles.values()].find((tile) => tile.kind === 'boss');
+  const hero = [...tiles.values()].find((tile) => tile.kind === 'hero');
+
+  if (!boss) {
+    return;
+  }
+
+  const random = mulberry32(hashString(`${board.seed}:${board.turn}:boss-weave`));
+  const attackIsRow = random() > 0.5;
+  const energyLine = attackIsRow ? boss.y : boss.x;
+
+  if (hero && ((attackIsRow && hero.y === energyLine) || (!attackIsRow && hero.x === energyLine))) {
+    hero.hp -= 2;
+
+    if (hero.hp <= 0) {
+      board.status = 'defeat';
+    }
+  }
+
+  for (let index = 0; index < BOARD_SIZE; index += 1) {
+    const x = attackIsRow ? index : energyLine;
+    const y = attackIsRow ? energyLine : index;
+
+    if (x === boss.x && y === boss.y) {
+      continue;
+    }
+
+    const occupied = [...tiles.values()].find((tile) => tile.x === x && tile.y === y);
+
+    if (!occupied) {
+      tiles.set(`stone-${board.turn}-${index}`, {
+        id: `stone-${board.turn}-${index}`,
+        kind: 'rock',
+        x,
+        y,
+        hp: 1,
+        attack: 0,
+        block: 2,
+        blocksMovement: true,
+        immovable: false
+      });
+    }
+  }
 }
 
 function findFallbackBossPosition(tiles: Tile[]): { x: number; y: number } | undefined {

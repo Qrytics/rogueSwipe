@@ -37,6 +37,7 @@ export interface BoardState {
   mode: GameMode;
   phase: RunPhase;
   turn: number;
+  bossTurnsElapsed: number;
   progress: number;
   maxProgress: number;
   progressPerTurn: number;
