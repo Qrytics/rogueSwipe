@@ -38,6 +38,17 @@ export interface SaveData {
   activeRun: RunSnapshot | null;
 }
 
+export interface LeaderboardEntry {
+  id: string;
+  mode: GameMode;
+  score: number;
+  turns: number;
+  gold: number;
+  level: number;
+  victory: boolean;
+  createdAt: string;
+}
+
 export type RunPhase = 'run' | 'boss';
 
 export interface Tile {

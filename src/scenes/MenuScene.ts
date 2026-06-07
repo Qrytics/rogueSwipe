@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { dailySeed } from '../game/random';
 import { getCloudIdentityLabel, hasCloudSync, syncMetaProgressToCloud } from '../game/cloud';
-import { loadActiveRun, loadMetaProgress } from '../game/persistence';
+import { loadActiveRun, loadLeaderboard, loadMetaProgress } from '../game/persistence';
 import type { GameMode, RunConfig } from '../game/types';
 
 const MENU_WIDTH = 768;
@@ -15,6 +15,7 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const meta = loadMetaProgress();
     const activeRun = loadActiveRun();
+    const leaderboard = loadLeaderboard();
     let statusText: Phaser.GameObjects.Text | null = null;
 
     this.cameras.main.setBackgroundColor('#08131c');
@@ -83,6 +84,30 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
+    this.add.text(MENU_WIDTH / 2, 360, 'Top Scores', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '24px',
+      color: '#f2f6ff',
+      stroke: '#000000',
+      strokeThickness: 5
+    }).setOrigin(0.5);
+
+    if (leaderboard.length === 0) {
+      this.add.text(MENU_WIDTH / 2, 398, 'No runs submitted yet.', {
+        fontFamily: 'Georgia, serif',
+        fontSize: '18px',
+        color: '#b4c4d9'
+      }).setOrigin(0.5);
+    } else {
+      leaderboard.slice(0, 3).forEach((entry, index) => {
+        this.add.text(MENU_WIDTH / 2, 392 + index * 28, `${index + 1}. ${entry.mode.toUpperCase()} ${entry.score}  |  Lv ${entry.level}  |  ${entry.turns} turns`, {
+          fontFamily: 'Georgia, serif',
+          fontSize: '16px',
+          color: '#d8e4f7'
+        }).setOrigin(0.5);
+      });
+    }
+
     const options = [
       {
         mode: 'quest',
@@ -116,7 +141,7 @@ export class MenuScene extends Phaser.Scene {
       }
     ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number; bossHp: number }>;
 
-    const panelTop = 400;
+    const panelTop = 500;
 
     options.forEach((option, index) => {
       const y = panelTop + index * 220;

@@ -1,8 +1,10 @@
-import type { PersistentProgress, RunSnapshot, SaveData } from './types';
+import type { LeaderboardEntry, PersistentProgress, RunSnapshot, SaveData } from './types';
 
 const STORAGE_KEY = 'rogueSwipe.save.v2';
 const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v1'];
 const CURRENT_SCHEMA_VERSION = 2;
+const LEADERBOARD_KEY = 'rogueSwipe.leaderboard.v1';
+const MAX_LEADERBOARD_ENTRIES = 10;
 
 const DEFAULT_META: PersistentProgress = {
   bankedGold: 0,
@@ -66,6 +68,42 @@ export function clearActiveRun(): void {
     meta: current.meta,
     activeRun: null
   });
+}
+
+export function loadLeaderboard(): LeaderboardEntry[] {
+  try {
+    const rawValue = localStorage.getItem(LEADERBOARD_KEY);
+
+    if (!rawValue) {
+      return [];
+    }
+
+    const parsed = JSON.parse(rawValue) as LeaderboardEntry[];
+
+    return parsed
+      .filter((entry) => typeof entry.score === 'number')
+      .sort((left, right) => right.score - left.score)
+      .slice(0, MAX_LEADERBOARD_ENTRIES);
+  } catch {
+    return [];
+  }
+}
+
+export function recordLeaderboardEntry(entry: Omit<LeaderboardEntry, 'id' | 'createdAt'>): LeaderboardEntry[] {
+  const current = loadLeaderboard();
+  const nextEntry: LeaderboardEntry = {
+    ...entry,
+    id: globalThis.crypto?.randomUUID?.() ?? `score-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`,
+    createdAt: new Date().toISOString()
+  };
+
+  const nextLeaderboard = [nextEntry, ...current]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, MAX_LEADERBOARD_ENTRIES);
+
+  localStorage.setItem(LEADERBOARD_KEY, JSON.stringify(nextLeaderboard));
+
+  return nextLeaderboard;
 }
 
 export function recordRunCompletion(turnsSurvived: number, goldEarned: number, victory: boolean): PersistentProgress {

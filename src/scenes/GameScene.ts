@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { createInitialBoardWithBonuses, slideBoard, useBackpackSpell } from '../game/engine';
 import { syncMetaProgressToCloud } from '../game/cloud';
 import { dailySeed } from '../game/random';
-import { clearActiveRun, loadMetaProgress, recordRunCompletion, saveActiveRun } from '../game/persistence';
+import { clearActiveRun, loadMetaProgress, recordLeaderboardEntry, recordRunCompletion, saveActiveRun } from '../game/persistence';
 import type { Direction, PersistentProgress, RunConfig, RunSnapshot, Tile } from '../game/types';
 
 const BOARD_SIZE = 5;
@@ -413,6 +413,18 @@ export class GameScene extends Phaser.Scene {
 
     this.runFinalized = true;
     this.metaProgress = recordRunCompletion(this.board.turn, this.board.gold, this.board.status === 'victory');
+    const hero = this.findHero();
+    const score = this.computeRunScore(hero?.hp ?? 0);
+
+    recordLeaderboardEntry({
+      mode: this.board.mode,
+      score,
+      turns: this.board.turn,
+      gold: this.board.gold,
+      level: this.board.heroLevel,
+      victory: this.board.status === 'victory'
+    });
+
     clearActiveRun();
     void syncMetaProgressToCloud(this.metaProgress);
   }
@@ -426,5 +438,19 @@ export class GameScene extends Phaser.Scene {
 
   private cloneBoardState(boardState: typeof this.board): typeof this.board {
     return JSON.parse(JSON.stringify(boardState)) as typeof this.board;
+  }
+
+  private computeRunScore(heroHp: number): number {
+    const modeBonus = this.board.mode === 'quest' ? 100 : this.board.mode === 'daily' ? 250 : 150;
+    const victoryBonus = this.board.status === 'victory' ? 500 : 0;
+
+    return (
+      this.board.turn * 12 +
+      this.board.gold * 25 +
+      this.board.heroLevel * 50 +
+      heroHp * 10 +
+      victoryBonus +
+      modeBonus
+    );
   }
 }
