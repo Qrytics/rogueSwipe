@@ -26,6 +26,15 @@ npm run dev
 npm run build
 ```
 
+## Optional cloud sync
+
+Set these environment variables to enable browser-to-Supabase meta progression sync:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+
+The game uses an anonymous local cloud identity and upserts into a `rogueswipe_profiles` table.
+
 ## Next steps
 
 - add the menu and mode selection flow

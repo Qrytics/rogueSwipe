@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { createInitialBoardWithBonuses, slideBoard, useBackpackSpell } from '../game/engine';
+import { syncMetaProgressToCloud } from '../game/cloud';
 import { dailySeed } from '../game/random';
 import { clearActiveRun, loadMetaProgress, recordRunCompletion, saveActiveRun } from '../game/persistence';
 import type { Direction, PersistentProgress, RunConfig, RunSnapshot, Tile } from '../game/types';
@@ -411,8 +412,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.runFinalized = true;
-    recordRunCompletion(this.board.turn, this.board.gold, this.board.status === 'victory');
+    this.metaProgress = recordRunCompletion(this.board.turn, this.board.gold, this.board.status === 'victory');
     clearActiveRun();
+    void syncMetaProgressToCloud(this.metaProgress);
   }
 
   private applyRunSnapshot(snapshot: RunSnapshot): void {

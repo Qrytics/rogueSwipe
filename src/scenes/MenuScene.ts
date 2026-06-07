@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { dailySeed } from '../game/random';
+import { getCloudIdentityLabel, hasCloudSync, syncMetaProgressToCloud } from '../game/cloud';
 import { loadActiveRun, loadMetaProgress } from '../game/persistence';
 import type { GameMode, RunConfig } from '../game/types';
 
@@ -14,6 +15,7 @@ export class MenuScene extends Phaser.Scene {
   create(): void {
     const meta = loadMetaProgress();
     const activeRun = loadActiveRun();
+    let statusText: Phaser.GameObjects.Text | null = null;
 
     this.cameras.main.setBackgroundColor('#08131c');
 
@@ -39,8 +41,36 @@ export class MenuScene extends Phaser.Scene {
       color: '#d8e4f7'
     }).setOrigin(0.5);
 
+    statusText = this.add.text(MENU_WIDTH / 2, 244, hasCloudSync()
+      ? `Cloud ready as ${getCloudIdentityLabel()}`
+      : 'Cloud sync unavailable. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable it.', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '16px',
+      color: hasCloudSync() ? '#9fe7b4' : '#e7c79f',
+      align: 'center',
+      wordWrap: { width: 640 }
+    }).setOrigin(0.5);
+
+    const cloudButton = this.add.text(MENU_WIDTH / 2, 280, 'Sync Cloud Save', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '18px',
+      color: '#16202d',
+      backgroundColor: '#d8e4f7',
+      padding: { left: 18, right: 18, top: 10, bottom: 10 }
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    cloudButton.on('pointerdown', async () => {
+      cloudButton.disableInteractive();
+      statusText?.setText('Syncing cloud save...');
+
+      const result = await syncMetaProgressToCloud(meta);
+      statusText?.setText(result.message);
+
+      cloudButton.setInteractive({ useHandCursor: true });
+    });
+
     if (activeRun) {
-      const resumeButton = this.add.text(MENU_WIDTH / 2, 252, `Resume ${activeRun.runConfig.title}  Turn ${activeRun.board.turn}`, {
+      const resumeButton = this.add.text(MENU_WIDTH / 2, 320, `Resume ${activeRun.runConfig.title}  Turn ${activeRun.board.turn}`, {
         fontFamily: 'Georgia, serif',
         fontSize: '20px',
         color: '#18311f',
@@ -86,7 +116,7 @@ export class MenuScene extends Phaser.Scene {
       }
     ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number; bossHp: number }>;
 
-    const panelTop = 280;
+    const panelTop = 400;
 
     options.forEach((option, index) => {
       const y = panelTop + index * 220;
