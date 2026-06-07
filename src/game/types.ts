@@ -4,6 +4,16 @@ export type TileKind = 'hero' | 'goblin' | 'spider' | 'rock' | 'web' | 'gold';
 
 export type RunStatus = 'playing' | 'victory' | 'defeat';
 
+export type GameMode = 'quest' | 'daily' | 'endless';
+
+export interface RunConfig {
+  mode: GameMode;
+  seed: string;
+  progressTarget: number;
+  title: string;
+  subtitle: string;
+}
+
 export interface Tile {
   id: string;
   kind: TileKind;

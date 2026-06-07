@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { createInitialBoard, slideBoard } from '../game/engine';
 import { dailySeed } from '../game/random';
-import type { Direction, Tile } from '../game/types';
+import type { Direction, RunConfig, Tile } from '../game/types';
 
 const BOARD_SIZE = 5;
 const BOARD_LEFT = 84;
@@ -11,9 +11,17 @@ const CELL_GAP = 6;
 
 export class GameScene extends Phaser.Scene {
   private board = createInitialBoard(dailySeed());
+  private runConfig: RunConfig = {
+    mode: 'daily',
+    seed: dailySeed(),
+    progressTarget: 100,
+    title: 'Daily Run',
+    subtitle: 'Generated from the current date.'
+  };
   private tileGraphics!: Phaser.GameObjects.Graphics;
   private uiText!: Phaser.GameObjects.Text;
   private tileTexts: Phaser.GameObjects.Text[] = [];
+  private endOverlayShown = false;
   private swipeStart: { x: number; y: number } | null = null;
 
   constructor() {
@@ -21,15 +29,32 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
+    const config = this.data.get('runConfig') as RunConfig | undefined;
+
+    if (config) {
+      this.runConfig = config;
+      this.board = createInitialBoard(config.seed);
+      this.board.maxProgress = config.progressTarget;
+      this.board.seed = config.seed;
+    }
+
     this.cameras.main.setBackgroundColor('#08131c');
     this.tileGraphics = this.add.graphics();
 
-    this.add.text(384, 80, 'Rogue Swipe', {
+    this.add.text(384, 80, this.runConfig.title, {
       fontFamily: 'Georgia, serif',
       fontSize: '52px',
       color: '#f2f6ff',
       stroke: '#000000',
       strokeThickness: 8
+    }).setOrigin(0.5);
+
+    this.add.text(384, 134, this.runConfig.subtitle, {
+      fontFamily: 'Georgia, serif',
+      fontSize: '18px',
+      color: '#9fb2c8',
+      align: 'center',
+      wordWrap: { width: 520 }
     }).setOrigin(0.5);
 
     this.uiText = this.add.text(384, 160, '', {
@@ -235,6 +260,11 @@ export class GameScene extends Phaser.Scene {
   }
 
   private showEndState(title: string, description: string): void {
+    if (this.endOverlayShown) {
+      return;
+    }
+
+    this.endOverlayShown = true;
     const overlay = this.add.rectangle(384, 650, 640, 420, 0x000000, 0.72);
     const panel = this.add.rectangle(384, 650, 540, 290, 0xd7def0, 1);
 
@@ -258,7 +288,20 @@ export class GameScene extends Phaser.Scene {
       color: '#3e526c'
     }).setOrigin(0.5);
 
+    const menuButton = this.add.text(384, 788, 'Return to Menu', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '22px',
+      color: '#174a28',
+      backgroundColor: '#bfe0cf',
+      padding: { left: 18, right: 18, top: 10, bottom: 10 }
+    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+    menuButton.on('pointerdown', () => {
+      this.scene.start('MenuScene');
+    });
+
     overlay.setDepth(10);
     panel.setDepth(11);
+    menuButton.setDepth(12);
   }
 }
