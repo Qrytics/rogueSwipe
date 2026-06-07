@@ -35,6 +35,10 @@ Set these environment variables to enable browser-to-Supabase meta progression s
 
 The game uses an anonymous local cloud identity and upserts into a `rogueswipe_profiles` table.
 
+## Save migration
+
+Player progress is stored in a versioned local save and migrated forward on load, so game updates should not wipe banked gold, unlocks, or an active run.
+
 ## Next steps
 
 - add the menu and mode selection flow

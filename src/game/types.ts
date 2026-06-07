@@ -33,6 +33,7 @@ export interface RunSnapshot {
 }
 
 export interface SaveData {
+  schemaVersion: number;
   meta: PersistentProgress;
   activeRun: RunSnapshot | null;
 }

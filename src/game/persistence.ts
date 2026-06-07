@@ -1,6 +1,8 @@
 import type { PersistentProgress, RunSnapshot, SaveData } from './types';
 
-const STORAGE_KEY = 'rogueSwipe.save.v1';
+const STORAGE_KEY = 'rogueSwipe.save.v2';
+const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v1'];
+const CURRENT_SCHEMA_VERSION = 2;
 
 const DEFAULT_META: PersistentProgress = {
   bankedGold: 0,
@@ -12,20 +14,22 @@ const DEFAULT_META: PersistentProgress = {
 
 export function loadSaveData(): SaveData {
   try {
-    const rawValue = localStorage.getItem(STORAGE_KEY);
+    const rawValue = readStoredSaveValue();
 
     if (!rawValue) {
-      return { meta: { ...DEFAULT_META }, activeRun: null };
+      return createEmptySaveData();
     }
 
-    const parsed = JSON.parse(rawValue) as Partial<SaveData>;
+    const parsed = JSON.parse(rawValue) as Partial<SaveData> & { version?: number };
+    const migrated = migrateSaveData(parsed);
 
-    return {
-      meta: mergeMeta(parsed.meta),
-      activeRun: parsed.activeRun ?? null
-    };
+    if (parsed.schemaVersion !== CURRENT_SCHEMA_VERSION) {
+      saveSaveData(migrated);
+    }
+
+    return migrated;
   } catch {
-    return { meta: { ...DEFAULT_META }, activeRun: null };
+    return createEmptySaveData();
   }
 }
 
@@ -40,6 +44,7 @@ export function loadActiveRun(): RunSnapshot | null {
 export function saveMetaProgress(meta: PersistentProgress): void {
   const current = loadSaveData();
   saveSaveData({
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     meta,
     activeRun: current.activeRun
   });
@@ -48,6 +53,7 @@ export function saveMetaProgress(meta: PersistentProgress): void {
 export function saveActiveRun(snapshot: RunSnapshot): void {
   const current = loadSaveData();
   saveSaveData({
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     meta: current.meta,
     activeRun: snapshot
   });
@@ -56,6 +62,7 @@ export function saveActiveRun(snapshot: RunSnapshot): void {
 export function clearActiveRun(): void {
   const current = loadSaveData();
   saveSaveData({
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     meta: current.meta,
     activeRun: null
   });
@@ -78,7 +85,10 @@ export function recordRunCompletion(turnsSurvived: number, goldEarned: number, v
 }
 
 export function saveSaveData(data: SaveData): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    ...data,
+    schemaVersion: CURRENT_SCHEMA_VERSION
+  }));
 }
 
 function mergeMeta(meta: Partial<PersistentProgress> | undefined): PersistentProgress {
@@ -89,4 +99,59 @@ function mergeMeta(meta: Partial<PersistentProgress> | undefined): PersistentPro
     permanentMaxHpBonus: meta?.permanentMaxHpBonus ?? DEFAULT_META.permanentMaxHpBonus,
     permanentAttackBonus: meta?.permanentAttackBonus ?? DEFAULT_META.permanentAttackBonus
   };
+}
+
+function createEmptySaveData(): SaveData {
+  return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    meta: { ...DEFAULT_META },
+    activeRun: null
+  };
+}
+
+function migrateSaveData(raw: Partial<SaveData> & { version?: number }): SaveData {
+  const meta = mergeMeta(raw.meta);
+
+  return {
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    meta,
+    activeRun: raw.activeRun ? migrateRunSnapshot(raw.activeRun) : null
+  };
+}
+
+function migrateRunSnapshot(snapshot: RunSnapshot): RunSnapshot {
+  return {
+    ...snapshot,
+    board: {
+      ...snapshot.board,
+      bossTurnsElapsed: snapshot.board.bossTurnsElapsed ?? 0,
+      bossAttackCountdown: snapshot.board.bossAttackCountdown ?? 0,
+      bossAttackAxis: snapshot.board.bossAttackAxis ?? 'row',
+      bossAttackLine: snapshot.board.bossAttackLine ?? 0,
+      heroLevel: snapshot.board.heroLevel ?? 1,
+      heroMaxHp: snapshot.board.heroMaxHp ?? snapshot.board.tiles.find((tile) => tile.kind === 'hero')?.hp ?? 5,
+      spellCharges: snapshot.board.spellCharges ?? 1,
+      spellMaxCharges: snapshot.board.spellMaxCharges ?? 3,
+      mode: snapshot.board.mode ?? snapshot.runConfig.mode,
+      phase: snapshot.board.phase ?? 'run'
+    }
+  };
+}
+
+function readStoredSaveValue(): string | null {
+  const current = localStorage.getItem(STORAGE_KEY);
+
+  if (current) {
+    return current;
+  }
+
+  for (const legacyKey of LEGACY_STORAGE_KEYS) {
+    const legacyValue = localStorage.getItem(legacyKey);
+
+    if (legacyValue) {
+      return legacyValue;
+    }
+  }
+
+  return null;
 }
