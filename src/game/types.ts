@@ -90,9 +90,10 @@ export interface BoardState {
   tiles: Tile[];
 }
 
-export interface SlideResult {
+export interface TurnResult {
   moved: boolean;
-  combatLog: string[];
+  acted: boolean;
+  messages: string[];
 }
 
 export interface SpellResult {

@@ -1,8 +1,8 @@
 import type { LeaderboardEntry, PersistentProgress, RunSnapshot, SaveData } from './types';
 
-const STORAGE_KEY = 'rogueSwipe.save.v2';
-const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v1'];
-const CURRENT_SCHEMA_VERSION = 2;
+const STORAGE_KEY = 'rogueSwipe.save.v3';
+const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v2', 'rogueSwipe.save.v1'];
+const CURRENT_SCHEMA_VERSION = 3;
 const LEADERBOARD_KEY = 'rogueSwipe.leaderboard.v1';
 const MAX_LEADERBOARD_ENTRIES = 10;
 
@@ -149,11 +149,15 @@ function createEmptySaveData(): SaveData {
 
 function migrateSaveData(raw: Partial<SaveData> & { version?: number }): SaveData {
   const meta = mergeMeta(raw.meta);
+  const incomingVersion = raw.schemaVersion ?? raw.version ?? 1;
+  const activeRun = incomingVersion >= CURRENT_SCHEMA_VERSION && raw.activeRun
+    ? migrateRunSnapshot(raw.activeRun)
+    : null;
 
   return {
     schemaVersion: CURRENT_SCHEMA_VERSION,
     meta,
-    activeRun: raw.activeRun ? migrateRunSnapshot(raw.activeRun) : null
+    activeRun
   };
 }
 

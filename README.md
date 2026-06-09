@@ -7,7 +7,7 @@ RogueSwipe is a mobile-first roguelike prototype built with TypeScript and Phase
 The first playable slice is in place:
 
 - 5x5 grid board
-- swipe and keyboard input
+- swipe and keyboard input that move the hero one tile per action
 - deterministic daily seed generation
 - basic combat, gold collection, and turn-based spawning
 - progress bar, HP, XP, and gold HUD

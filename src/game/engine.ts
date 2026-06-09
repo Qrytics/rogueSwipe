@@ -1,5 +1,5 @@
 import { hashString, mulberry32 } from './random';
-import type { BoardState, Direction, GameMode, RunConfig, SlideResult, SpellResult, Tile, TileKind } from './types';
+import type { BoardState, Direction, GameMode, SpellResult, Tile, TileKind, TurnResult } from './types';
 
 const BOARD_SIZE = 5;
 
@@ -43,6 +43,10 @@ export function createInitialBoardWithBonuses(seed: string, mode: GameMode = 'da
     const kind = spawnKinds[Math.floor(random() * spawnKinds.length)];
     const position = pickEmptyCell(tiles, random);
 
+    if (!position) {
+      break;
+    }
+
     tiles.push(createTile(kind, position.x, position.y, index));
   }
 
@@ -73,96 +77,138 @@ export function createInitialBoardWithBonuses(seed: string, mode: GameMode = 'da
   };
 }
 
-export function slideBoard(board: BoardState, direction: Direction): SlideResult {
+export function moveHeroOneTile(board: BoardState, direction: Direction): TurnResult {
   if (board.status !== 'playing') {
-    return { moved: false, combatLog: [] };
+    return { acted: false, moved: false, messages: [] };
   }
 
-  const combatLog: string[] = [];
-  const nextTiles = new Map(board.tiles.map((tile) => [tile.id, { ...tile }]));
-  const orderedTiles = [...nextTiles.values()].sort((left, right) => sortForDirection(left, right, direction));
+  const hero = board.tiles.find((tile) => tile.kind === 'hero');
+
+  if (!hero) {
+    return { acted: false, moved: false, messages: ['No hero found.'] };
+  }
+
+  const next = offset(hero.x, hero.y, direction);
+
+  if (!inBounds(next.x, next.y)) {
+    return { acted: false, moved: false, messages: ['A wall blocks the path.'] };
+  }
+
+  const occupant = board.tiles.find((tile) => tile.id !== hero.id && tile.x === next.x && tile.y === next.y);
+  const messages: string[] = [];
+  let acted = false;
   let moved = false;
 
-  for (const tile of orderedTiles) {
-    const current = nextTiles.get(tile.id);
+  if (!occupant) {
+    hero.x = next.x;
+    hero.y = next.y;
+    acted = true;
+    moved = true;
+  } else if (occupant.kind === 'gold') {
+    board.gold += occupant.value ?? 1;
+    board.tiles = board.tiles.filter((tile) => tile.id !== occupant.id);
+    hero.x = next.x;
+    hero.y = next.y;
+    acted = true;
+    moved = true;
+    messages.push(`You picked up ${occupant.value ?? 1} gold.`);
+  } else if (occupant.blocksMovement && occupant.kind !== 'hero') {
+    const combatOutcome = resolveCombat(hero, occupant);
+    acted = true;
+    messages.push(combatOutcome.message);
 
-    if (!current || current.immovable) {
-      continue;
+    if (occupant.kind === 'boss') {
+      board.bossHp = Math.max(0, occupant.hp);
     }
 
-    let destinationX = current.x;
-    let destinationY = current.y;
-
-    while (true) {
-      const candidate = offset(destinationX, destinationY, direction);
-
-      if (!inBounds(candidate.x, candidate.y)) {
-        break;
-      }
-
-      const occupant = findOccupant(nextTiles, candidate.x, candidate.y, current.id);
-
-      if (!occupant) {
-        destinationX = candidate.x;
-        destinationY = candidate.y;
-        continue;
-      }
-
-      if (occupant.kind === 'gold' && current.kind === 'hero') {
-        nextTiles.delete(occupant.id);
-        board.gold += occupant.value ?? 1;
-        destinationX = candidate.x;
-        destinationY = candidate.y;
-        continue;
-      }
-
-      if (occupant.blocksMovement) {
-        if (current.kind === 'hero' && occupant.kind !== 'hero') {
-          const combatOutcome = resolveCombat(current, occupant);
-
-          combatLog.push(combatOutcome.message);
-
-          if (occupant.kind === 'boss') {
-            board.bossHp = Math.max(0, occupant.hp);
-          }
-
-          if (combatOutcome.targetDied) {
-            nextTiles.delete(occupant.id);
-            board.xp += xpForTarget(occupant.kind);
-            board.gold += goldForTarget(occupant.kind);
-
-            if (occupant.kind === 'boss') {
-              board.bossHp = 0;
-            }
-
-            applyLevelUps(board, current);
-
-            destinationX = candidate.x;
-            destinationY = candidate.y;
-          }
-
-          if (combatOutcome.heroDied) {
-            board.status = 'defeat';
-          }
-        }
-
-        break;
-      }
-
-      break;
-    }
-
-    if (destinationX !== current.x || destinationY !== current.y) {
-      current.x = destinationX;
-      current.y = destinationY;
+    if (combatOutcome.targetDied) {
+      board.tiles = board.tiles.filter((tile) => tile.id !== occupant.id);
+      board.xp += xpForTarget(occupant.kind);
+      board.gold += goldForTarget(occupant.kind);
+      applyLevelUps(board, hero);
+      hero.x = next.x;
+      hero.y = next.y;
       moved = true;
+
+      if (occupant.kind === 'boss') {
+        board.bossHp = 0;
+      }
+    }
+
+    if (combatOutcome.heroDied) {
+      board.status = 'defeat';
     }
   }
 
-  board.tiles = [...nextTiles.values()];
+  if (acted) {
+    processTurnLifecycle(board);
+  }
+
+  return { acted, moved, messages };
+}
+
+export function useBackpackSpell(board: BoardState): SpellResult {
+  if (board.status !== 'playing') {
+    return { used: false, message: 'You cannot use a spell right now.' };
+  }
+
+  if (board.spellCharges <= 0) {
+    return { used: false, message: 'No spell charges left.' };
+  }
+
+  const hero = board.tiles.find((tile) => tile.kind === 'hero');
+
+  if (!hero) {
+    return { used: false, message: 'No hero found.' };
+  }
+
+  board.spellCharges -= 1;
+
+  const target = findSpellTarget(board, hero);
+
+  if (target) {
+    if (target.kind === 'boss') {
+      target.hp -= 3;
+      board.bossHp = Math.max(0, target.hp);
+
+      if (target.hp <= 0) {
+        board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
+        board.status = 'victory';
+        return { used: true, message: 'Fireball scorched the boss.' };
+      }
+
+      return { used: true, message: 'Fireball hit the boss.' };
+    }
+
+    target.hp -= 999;
+
+    if (target.hp <= 0) {
+      board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
+      board.xp += xpForTarget(target.kind);
+      board.gold += goldForTarget(target.kind);
+      applyLevelUps(board, hero);
+      return { used: true, message: `Fireball destroyed the ${target.kind}.` };
+    }
+  }
+
+  hero.hp = Math.min(board.heroMaxHp, hero.hp + 2);
+  return { used: true, message: 'Fireball restored 2 HP.' };
+}
+
+function processTurnLifecycle(board: BoardState): void {
   board.turn += 1;
+
   if (board.phase === 'run') {
     board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
+  }
+
+  if (board.mode === 'quest' && board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
+    startBossEncounter(board);
+  }
+
+  if (board.phase === 'boss' && board.bossHp <= 0 && board.status === 'playing') {
+    board.status = 'victory';
+    return;
   }
 
   if (board.status === 'playing') {
@@ -174,21 +220,16 @@ export function slideBoard(board: BoardState, direction: Direction): SlideResult
     board.bossAttackCountdown -= 1;
 
     if (board.bossAttackCountdown <= 0) {
+      const nextTiles = new Map(board.tiles.map((tile) => [tile.id, { ...tile }]));
       bossWeaveAttack(board, nextTiles);
       board.tiles = [...nextTiles.values()];
       scheduleBossAttack(board);
     }
   }
 
-  if (board.mode === 'quest' && board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
-    startBossEncounter(board);
-  }
-
   if (board.phase === 'boss' && board.bossHp <= 0 && board.status === 'playing') {
     board.status = 'victory';
   }
-
-  return { moved, combatLog };
 }
 
 function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
@@ -281,7 +322,7 @@ function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
   }
 }
 
-function pickEmptyCell(tiles: Tile[], random: () => number): { x: number; y: number } {
+function pickEmptyCell(tiles: Tile[], random: () => number): { x: number; y: number } | undefined {
   const emptyCells: Array<{ x: number; y: number }> = [];
 
   for (let y = 0; y < BOARD_SIZE; y += 1) {
@@ -292,20 +333,11 @@ function pickEmptyCell(tiles: Tile[], random: () => number): { x: number; y: num
     }
   }
 
-  return emptyCells[Math.floor(random() * emptyCells.length)];
-}
-
-function sortForDirection(left: Tile, right: Tile, direction: Direction): number {
-  switch (direction) {
-    case 'left':
-      return left.x - right.x || left.y - right.y;
-    case 'right':
-      return right.x - left.x || left.y - right.y;
-    case 'up':
-      return left.y - right.y || left.x - right.x;
-    case 'down':
-      return right.y - left.y || left.x - right.x;
+  if (emptyCells.length === 0) {
+    return undefined;
   }
+
+  return emptyCells[Math.floor(random() * emptyCells.length)];
 }
 
 function offset(x: number, y: number, direction: Direction): { x: number; y: number } {
@@ -325,10 +357,6 @@ function inBounds(x: number, y: number): boolean {
   return x >= 0 && y >= 0 && x < BOARD_SIZE && y < BOARD_SIZE;
 }
 
-function findOccupant(tiles: Map<string, Tile>, x: number, y: number, movingId: string): Tile | undefined {
-  return [...tiles.values()].find((tile) => tile.id !== movingId && tile.x === x && tile.y === y);
-}
-
 function resolveCombat(attacker: Tile, defender: Tile): { targetDied: boolean; heroDied: boolean; message: string } {
   if (attacker.kind !== 'hero') {
     return { targetDied: false, heroDied: false, message: '' };
@@ -345,7 +373,7 @@ function resolveCombat(attacker: Tile, defender: Tile): { targetDied: boolean; h
   return {
     targetDied: targetRemainingHp <= 0,
     heroDied: heroRemainingHp <= 0,
-    message: `${attacker.kind} hit ${defender.kind} for ${damageToTarget}.`
+    message: `You strike ${defender.kind} for ${damageToTarget}.`
   };
 }
 
@@ -360,7 +388,6 @@ function xpForTarget(kind: TileKind): number {
     case 'gold':
     case 'web':
     case 'boss':
-      return 0;
     case 'hero':
       return 0;
   }
@@ -368,53 +395,6 @@ function xpForTarget(kind: TileKind): number {
 
 function goldForTarget(kind: TileKind): number {
   return kind === 'gold' ? 1 : 0;
-}
-
-export function useBackpackSpell(board: BoardState): SpellResult {
-  if (board.status !== 'playing') {
-    return { used: false, message: 'You cannot use a spell right now.' };
-  }
-
-  if (board.spellCharges <= 0) {
-    return { used: false, message: 'No spell charges left.' };
-  }
-
-  const hero = board.tiles.find((tile) => tile.kind === 'hero');
-
-  if (!hero) {
-    return { used: false, message: 'No hero found.' };
-  }
-
-  board.spellCharges -= 1;
-
-  const target = findSpellTarget(board, hero);
-
-  if (target) {
-    if (target.kind === 'boss') {
-      target.hp -= 3;
-      board.bossHp = Math.max(0, target.hp);
-      if (target.hp <= 0) {
-        board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
-        return { used: true, message: 'Fireball scorched the boss.' };
-      }
-
-      return { used: true, message: 'Fireball hit the boss.' };
-    }
-
-    const damage = 999;
-    target.hp -= damage;
-
-    if (target.hp <= 0) {
-      board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
-      board.xp += xpForTarget(target.kind);
-      board.gold += goldForTarget(target.kind);
-      applyLevelUps(board, hero);
-      return { used: true, message: `Fireball destroyed the ${target.kind}.` };
-    }
-  }
-
-  hero.hp = Math.min(board.heroMaxHp, hero.hp + 2);
-  return { used: true, message: 'Fireball restored 2 HP.' };
 }
 
 function spawnTurnTiles(board: BoardState): void {
@@ -435,7 +415,7 @@ function spawnTurnTiles(board: BoardState): void {
 
 function startBossEncounter(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:boss`));
-  const bossHp = 12;
+  const bossHp = Math.max(1, board.bossMaxHp || 12);
   const bossPosition = pickEmptyCell(board.tiles, random) ?? findFallbackBossPosition(board.tiles);
 
   board.phase = 'boss';

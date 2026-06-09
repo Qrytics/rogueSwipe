@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { createInitialBoardWithBonuses, slideBoard, useBackpackSpell } from '../game/engine';
+import { createInitialBoardWithBonuses, moveHeroOneTile, useBackpackSpell } from '../game/engine';
 import { syncMetaProgressToCloud } from '../game/cloud';
 import { dailySeed } from '../game/random';
 import { clearActiveRun, loadMetaProgress, recordLeaderboardEntry, recordRunCompletion, saveActiveRun } from '../game/persistence';
@@ -92,7 +92,7 @@ export class GameScene extends Phaser.Scene {
       align: 'center'
     }).setOrigin(0.5, 0);
 
-    this.add.text(384, 235, 'Swipe or use arrow keys', {
+    this.add.text(384, 235, 'Swipe or use arrow keys to move 1 tile', {
       fontFamily: 'Georgia, serif',
       fontSize: '18px',
       color: '#8aa0b9'
@@ -155,13 +155,13 @@ export class GameScene extends Phaser.Scene {
   }
 
   private takeTurn(direction: Direction): void {
-    const result = slideBoard(this.board, direction);
+    const result = moveHeroOneTile(this.board, direction);
 
-    if (result.moved || result.combatLog.length > 0) {
-      this.lastActionMessage = result.combatLog[0] ?? this.lastActionMessage;
+    if (result.acted || result.messages.length > 0) {
+      this.lastActionMessage = result.messages[0] ?? this.lastActionMessage;
       this.persistRun();
       this.renderBoard();
-      this.refreshUi(result.combatLog);
+      this.refreshUi(result.messages);
     }
   }
 
@@ -187,7 +187,7 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
-  private refreshUi(combatLog: string[] = []): void {
+  private refreshUi(messages: string[] = []): void {
     const progressWidth = 420;
     const progress = this.board.phase === 'boss'
       ? Math.floor((Math.max(0, this.board.bossHp) / Math.max(1, this.board.bossMaxHp)) * 100)
@@ -197,7 +197,7 @@ export class GameScene extends Phaser.Scene {
     const bossTelegraph = this.board.phase === 'boss'
       ? `Stone-Weaver ${this.board.bossAttackCountdown <= 1 ? 'strikes next' : `charges ${this.board.bossAttackCountdown}`}`
       : '';
-    const actionLine = combatLog[0] ?? this.lastActionMessage;
+    const actionLine = messages[0] ?? this.lastActionMessage;
 
     this.uiText.setText([
       `Turn ${this.board.turn}`,

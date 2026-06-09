@@ -28,7 +28,7 @@ export class MenuScene extends Phaser.Scene {
       strokeThickness: 8
     }).setOrigin(0.5);
 
-    this.add.text(MENU_WIDTH / 2, 160, 'Slide through the board, survive the run, and chase the leaderboard.', {
+    this.add.text(MENU_WIDTH / 2, 160, 'Swipe to step one tile at a time, survive the run, and chase the leaderboard.', {
       fontFamily: 'Georgia, serif',
       fontSize: '20px',
       color: '#b4c4d9',
@@ -187,7 +187,7 @@ export class MenuScene extends Phaser.Scene {
       });
     });
 
-    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 110, 'Swipe in-game. The menu is just the first board.', {
+    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 110, 'Every swipe moves your hero exactly one tile.', {
       fontFamily: 'Georgia, serif',
       fontSize: '18px',
       color: '#8aa0b9'
