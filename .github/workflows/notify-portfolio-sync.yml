@@ -1,0 +1,23 @@
+name: Notify Portfolio Sync
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger portfolio sync workflow
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PORTFOLIO_REPO_DISPATCH_TOKEN }}
+          repository: ${{ vars.PORTFOLIO_REPO }}
+          event-type: rogueswipe-updated
+          client-payload: >-
+            {"source_repo":"${{ github.repository }}","source_sha":"${{ github.sha }}","source_ref":"${{ github.ref_name }}"}
