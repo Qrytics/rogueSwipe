@@ -1,8 +1,8 @@
 import type { LeaderboardEntry, PersistentProgress, RunSnapshot, SaveData } from './types';
 
-const STORAGE_KEY = 'rogueSwipe.save.v3';
-const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v2', 'rogueSwipe.save.v1'];
-const CURRENT_SCHEMA_VERSION = 3;
+const STORAGE_KEY = 'rogueSwipe.save.v4';
+const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v3', 'rogueSwipe.save.v2', 'rogueSwipe.save.v1'];
+const CURRENT_SCHEMA_VERSION = 4;
 const LEADERBOARD_KEY = 'rogueSwipe.leaderboard.v1';
 const MAX_LEADERBOARD_ENTRIES = 10;
 
@@ -30,7 +30,8 @@ export function loadSaveData(): SaveData {
     }
 
     return migrated;
-  } catch {
+  } catch (error) {
+    console.warn('rogueSwipe: failed to load save data, starting fresh', error);
     return createEmptySaveData();
   }
 }
@@ -91,6 +92,16 @@ export function loadLeaderboard(): LeaderboardEntry[] {
 
 export function recordLeaderboardEntry(entry: Omit<LeaderboardEntry, 'id' | 'createdAt'>): LeaderboardEntry[] {
   const current = loadLeaderboard();
+
+  // Deduplicate: drop any entry with the same score+mode+turns to prevent double-submission on page refresh
+  const isDuplicate = current.some(
+    (existing) => existing.score === entry.score && existing.mode === entry.mode && existing.turns === entry.turns
+  );
+
+  if (isDuplicate) {
+    return current;
+  }
+
   const nextEntry: LeaderboardEntry = {
     ...entry,
     id: globalThis.crypto?.randomUUID?.() ?? `score-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`,
@@ -149,8 +160,8 @@ function createEmptySaveData(): SaveData {
 
 function migrateSaveData(raw: Partial<SaveData> & { version?: number }): SaveData {
   const meta = mergeMeta(raw.meta);
-  const incomingVersion = raw.schemaVersion ?? raw.version ?? 1;
-  const activeRun = incomingVersion >= CURRENT_SCHEMA_VERSION && raw.activeRun
+  // Always attempt to migrate the active run — migrateRunSnapshot fills in missing fields with safe defaults
+  const activeRun = raw.activeRun
     ? migrateRunSnapshot(raw.activeRun)
     : null;
 
@@ -175,7 +186,8 @@ function migrateRunSnapshot(snapshot: RunSnapshot): RunSnapshot {
       spellCharges: snapshot.board.spellCharges ?? 1,
       spellMaxCharges: snapshot.board.spellMaxCharges ?? 3,
       mode: snapshot.board.mode ?? snapshot.runConfig.mode,
-      phase: snapshot.board.phase ?? 'run'
+      phase: snapshot.board.phase ?? 'run',
+      heroIsSlowed: snapshot.board.heroIsSlowed ?? false
     }
   };
 }

@@ -73,7 +73,8 @@ export function createInitialBoardWithBonuses(seed: string, mode: GameMode = 'da
     gold: 0,
     status: 'playing',
     seed,
-    tiles
+    tiles,
+    heroIsSlowed: false
   };
 }
 
@@ -112,6 +113,15 @@ export function moveHeroOneTile(board: BoardState, direction: Direction): TurnRe
     acted = true;
     moved = true;
     messages.push(`You picked up ${occupant.value ?? 1} gold.`);
+  } else if (occupant.kind === 'web') {
+    // Webs slow the hero — they still get removed but the hero loses a spawn cycle
+    board.tiles = board.tiles.filter((tile) => tile.id !== occupant.id);
+    hero.x = next.x;
+    hero.y = next.y;
+    board.heroIsSlowed = true;
+    acted = true;
+    moved = true;
+    messages.push('You tore through a web. Slowed!');
   } else if (occupant.blocksMovement && occupant.kind !== 'hero') {
     const combatOutcome = resolveCombat(hero, occupant);
     acted = true;
@@ -202,17 +212,23 @@ function processTurnLifecycle(board: BoardState): void {
     board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
   }
 
-  if (board.mode === 'quest' && board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
-    startBossEncounter(board);
-  }
-
-  if (board.phase === 'boss' && board.bossHp <= 0 && board.status === 'playing') {
-    board.status = 'victory';
-    return;
+  if (board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
+    if (board.mode === 'quest') {
+      startBossEncounter(board);
+    } else {
+      // daily and endless reach victory directly when progress fills
+      board.status = 'victory';
+      return;
+    }
   }
 
   if (board.status === 'playing') {
-    spawnTurnTiles(board);
+    if (board.heroIsSlowed) {
+      // Consume the slow — skip spawning this turn
+      board.heroIsSlowed = false;
+    } else {
+      spawnTurnTiles(board);
+    }
   }
 
   if (board.phase === 'boss' && board.status === 'playing') {
@@ -399,9 +415,22 @@ function goldForTarget(kind: TileKind): number {
 
 function spawnTurnTiles(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:${board.turn}:spawn`));
-  const spawnKinds: TileKind[] = ['goblin', 'goblin', 'spider', 'rock', 'web', 'gold'];
 
-  for (let index = 0; index < board.spawnsPerTurn; index += 1) {
+  // Shift spawn pool toward harder enemies as turns advance
+  const difficultyTier = Math.min(2, Math.floor(board.turn / 20));
+  const spawnPools: TileKind[][] = [
+    ['goblin', 'goblin', 'spider', 'rock', 'web', 'gold'],
+    ['goblin', 'goblin', 'goblin', 'spider', 'spider', 'rock'],
+    ['goblin', 'goblin', 'spider', 'spider', 'spider', 'rock']
+  ];
+  const spawnKinds = spawnPools[difficultyTier];
+
+  // Endless mode gains extra spawns every 30 turns, capped at 4
+  const dynamicSpawns = board.mode === 'endless'
+    ? Math.min(4, board.spawnsPerTurn + Math.floor(board.turn / 30))
+    : board.spawnsPerTurn;
+
+  for (let index = 0; index < dynamicSpawns; index += 1) {
     const kind = spawnKinds[Math.floor(random() * spawnKinds.length)];
     const position = pickEmptyCell(board.tiles, random);
 
@@ -415,7 +444,9 @@ function spawnTurnTiles(board: BoardState): void {
 
 function startBossEncounter(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:boss`));
-  const bossHp = Math.max(1, board.bossMaxHp || 12);
+  // Scale boss HP with hero level so it stays challenging after upgrades
+  const baseHp = board.bossMaxHp > 0 ? board.bossMaxHp : 12;
+  const bossHp = Math.max(baseHp, 8 + board.heroLevel * 2);
   const bossPosition = pickEmptyCell(board.tiles, random) ?? findFallbackBossPosition(board.tiles);
 
   board.phase = 'boss';
@@ -487,9 +518,9 @@ function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
 function findFallbackBossPosition(tiles: Tile[]): { x: number; y: number } | undefined {
   for (let y = 0; y < BOARD_SIZE; y += 1) {
     for (let x = 0; x < BOARD_SIZE; x += 1) {
-      const occupant = tiles.find((tile) => tile.x === x && tile.y === y && tile.kind !== 'hero');
+      const isOccupied = tiles.some((tile) => tile.x === x && tile.y === y);
 
-      if (occupant) {
+      if (!isOccupied) {
         return { x, y };
       }
     }
@@ -530,13 +561,18 @@ function findSpellTarget(board: BoardState, hero: Tile): Tile | undefined {
 }
 
 function applyLevelUps(board: BoardState, hero: Tile): void {
-  while (board.xp >= 100) {
-    board.xp -= 100;
+  // XP threshold scales per level: 100, 120, 140, … so hero doesn't outpace enemies indefinitely
+  let xpNeeded = 100 + (board.heroLevel - 1) * 20;
+
+  while (board.xp >= xpNeeded) {
+    board.xp -= xpNeeded;
     board.heroLevel += 1;
     board.heroMaxHp += 2;
     hero.attack += 1;
     hero.block += 1;
     hero.hp = Math.min(board.heroMaxHp, hero.hp + 3);
     board.spellCharges = Math.min(board.spellMaxCharges, board.spellCharges + 1);
+    // Recompute threshold for the new level
+    xpNeeded = 100 + (board.heroLevel - 1) * 20;
   }
 }

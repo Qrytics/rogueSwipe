@@ -52,34 +52,47 @@ export async function syncMetaProgressToCloud(meta: PersistentProgress): Promise
   }
 
   const userId = getAnonymousCloudUserId();
-  const response = await fetch(`${config.url.replace(/\/$/, '')}/rest/v1/rogueswipe_profiles?on_conflict=user_id`, {
-    method: 'POST',
-    headers: {
-      apikey: config.anonKey,
-      Authorization: `Bearer ${config.anonKey}`,
-      'Content-Type': 'application/json',
-      Prefer: 'resolution=merge-duplicates,return=minimal'
-    },
-    body: JSON.stringify({
-      user_id: userId,
-      banked_gold: meta.bankedGold,
-      completed_runs: meta.completedRuns,
-      best_turns_survived: meta.bestTurnsSurvived,
-      permanent_max_hp_bonus: meta.permanentMaxHpBonus,
-      permanent_attack_bonus: meta.permanentAttackBonus,
-      updated_at: new Date().toISOString()
-    })
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-  if (!response.ok) {
+  try {
+    const response = await fetch(`${config.url.replace(/\/$/, '')}/rest/v1/rogueswipe_profiles?on_conflict=user_id`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        apikey: config.anonKey,
+        Authorization: `Bearer ${config.anonKey}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({
+        user_id: userId,
+        banked_gold: meta.bankedGold,
+        completed_runs: meta.completedRuns,
+        best_turns_survived: meta.bestTurnsSurvived,
+        permanent_max_hp_bonus: meta.permanentMaxHpBonus,
+        permanent_attack_bonus: meta.permanentAttackBonus,
+        updated_at: new Date().toISOString()
+      })
+    });
+
+    if (!response.ok) {
+      return {
+        synced: false,
+        message: `Cloud sync failed (${response.status}).`
+      };
+    }
+
     return {
-      synced: false,
-      message: `Cloud sync failed (${response.status}).`
+      synced: true,
+      message: `Cloud sync saved for ${userId.slice(0, 8)}.`
     };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return { synced: false, message: 'Cloud sync timed out.' };
+    }
+    return { synced: false, message: 'Cloud sync error.' };
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  return {
-    synced: true,
-    message: `Cloud sync saved for ${userId.slice(0, 8)}.`
-  };
 }

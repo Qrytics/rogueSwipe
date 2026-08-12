@@ -84,7 +84,7 @@ export class MenuScene extends Phaser.Scene {
       });
     }
 
-    this.add.text(MENU_WIDTH / 2, 360, 'Top Scores', {
+    this.add.text(MENU_WIDTH / 2, 356, 'Top Scores', {
       fontFamily: 'Georgia, serif',
       fontSize: '24px',
       color: '#f2f6ff',
@@ -93,19 +93,33 @@ export class MenuScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     if (leaderboard.length === 0) {
-      this.add.text(MENU_WIDTH / 2, 398, 'No runs submitted yet.', {
+      this.add.text(MENU_WIDTH / 2, 392, 'No runs yet — play a mode below to get on the board!', {
         fontFamily: 'Georgia, serif',
-        fontSize: '18px',
-        color: '#b4c4d9'
+        fontSize: '16px',
+        color: '#b4c4d9',
+        align: 'center',
+        wordWrap: { width: 520 }
       }).setOrigin(0.5);
     } else {
-      leaderboard.slice(0, 3).forEach((entry, index) => {
-        this.add.text(MENU_WIDTH / 2, 392 + index * 28, `${index + 1}. ${entry.mode.toUpperCase()} ${entry.score}  |  Lv ${entry.level}  |  ${entry.turns} turns`, {
+      const shownEntries = leaderboard.slice(0, 5);
+      shownEntries.forEach((entry, index) => {
+        const victoryMark = entry.victory ? ' ✓' : ' ✗';
+        const modeBadge = entry.mode === 'quest' ? '[Q]' : entry.mode === 'daily' ? '[D]' : '[∞]';
+        const line = `${index + 1}. ${modeBadge} ${entry.score}  Lv${entry.level}  ${entry.turns}t${victoryMark}`;
+        this.add.text(MENU_WIDTH / 2, 384 + index * 24, line, {
           fontFamily: 'Georgia, serif',
           fontSize: '16px',
-          color: '#d8e4f7'
+          color: entry.victory ? '#9fe7b4' : '#d8e4f7'
         }).setOrigin(0.5);
       });
+
+      if (leaderboard.length > 5) {
+        this.add.text(MENU_WIDTH / 2, 384 + 5 * 24, `+${leaderboard.length - 5} more runs`, {
+          fontFamily: 'Georgia, serif',
+          fontSize: '14px',
+          color: '#8aa0b9'
+        }).setOrigin(0.5);
+      }
     }
 
     const options = [
@@ -187,10 +201,16 @@ export class MenuScene extends Phaser.Scene {
       });
     });
 
-    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 110, 'Every swipe moves your hero exactly one tile.', {
+    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 130, 'Every swipe moves your hero exactly one tile.', {
       fontFamily: 'Georgia, serif',
       fontSize: '18px',
       color: '#8aa0b9'
+    }).setOrigin(0.5);
+
+    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 96, 'Desktop: Arrow keys or WASD  ·  Escape to pause', {
+      fontFamily: 'Georgia, serif',
+      fontSize: '15px',
+      color: '#67809a'
     }).setOrigin(0.5);
   }
 }
