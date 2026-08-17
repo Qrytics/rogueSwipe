@@ -1,8 +1,8 @@
 import type { LeaderboardEntry, PersistentProgress, RunSnapshot, SaveData } from './types';
 
-const STORAGE_KEY = 'rogueSwipe.save.v4';
-const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v3', 'rogueSwipe.save.v2', 'rogueSwipe.save.v1'];
-const CURRENT_SCHEMA_VERSION = 4;
+const STORAGE_KEY = 'rogueSwipe.save.v5';
+const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v4', 'rogueSwipe.save.v3', 'rogueSwipe.save.v2', 'rogueSwipe.save.v1'];
+const CURRENT_SCHEMA_VERSION = 5;
 const LEADERBOARD_KEY = 'rogueSwipe.leaderboard.v1';
 const MAX_LEADERBOARD_ENTRIES = 10;
 /** Identical entries recorded within this window are treated as one accidental double-submission. */
@@ -186,23 +186,52 @@ function migrateSaveData(raw: Partial<SaveData> & { version?: number }): SaveDat
 }
 
 function migrateRunSnapshot(snapshot: RunSnapshot): RunSnapshot {
+  const tiles = snapshot.board.tiles ?? [];
+
   return {
     ...snapshot,
     board: {
       ...snapshot.board,
+      tiles,
       bossTurnsElapsed: snapshot.board.bossTurnsElapsed ?? 0,
       bossAttackCountdown: snapshot.board.bossAttackCountdown ?? 0,
       bossAttackAxis: snapshot.board.bossAttackAxis ?? 'row',
       bossAttackLine: snapshot.board.bossAttackLine ?? 0,
       heroLevel: snapshot.board.heroLevel ?? 1,
-      heroMaxHp: snapshot.board.heroMaxHp ?? snapshot.board.tiles.find((tile) => tile.kind === 'hero')?.hp ?? 5,
+      heroMaxHp: snapshot.board.heroMaxHp ?? tiles.find((tile) => tile.kind === 'hero')?.hp ?? 5,
       spellCharges: snapshot.board.spellCharges ?? 1,
       spellMaxCharges: snapshot.board.spellMaxCharges ?? 3,
       mode: snapshot.board.mode ?? snapshot.runConfig.mode,
       phase: snapshot.board.phase ?? 'run',
-      heroIsSlowed: snapshot.board.heroIsSlowed ?? false
+      heroIsSlowed: snapshot.board.heroIsSlowed ?? false,
+      // v5. `maxLayers ?? 1`, deliberately not 5: a v4 Quest run was saved under the rules where its
+      // boss *was* the ending, so it should still end there rather than being dropped into four
+      // surprise extra floors it was never balanced for. New runs get 5 from their RunConfig.
+      layer: snapshot.board.layer ?? 1,
+      maxLayers: snapshot.board.maxLayers ?? 1,
+      // Pre-v5 boards kept the configured boss HP in `bossMaxHp`, which is now a per-encounter output.
+      bossBaseHp: snapshot.board.bossBaseHp ?? snapshot.runConfig.bossHp ?? snapshot.board.bossMaxHp ?? 0,
+      // Ids used to be positional, so seed the monotonic counter above every id already in play.
+      nextTileId: snapshot.board.nextTileId ?? highestTileId(tiles) + 1
+    },
+    runConfig: {
+      ...snapshot.runConfig,
+      layers: snapshot.runConfig.layers ?? 1
     }
   };
+}
+
+/**
+ * Highest numeric suffix among existing tile ids, so a resumed run cannot mint an id that collides
+ * with one already on the board. Ids are strings like `goblin-12` or `stone-30`; anything unparseable
+ * (the hero's bare `'hero'`) contributes nothing.
+ */
+function highestTileId(tiles: RunSnapshot['board']['tiles']): number {
+  return tiles.reduce((highest, tile) => {
+    const suffix = Number.parseInt(tile.id.slice(tile.id.lastIndexOf('-') + 1), 10);
+
+    return Number.isFinite(suffix) ? Math.max(highest, suffix) : highest;
+  }, 0);
 }
 
 function readStoredSaveValue(): string | null {
