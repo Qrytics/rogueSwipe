@@ -1,282 +1,408 @@
-# RogueSwipe Improvement Plan
+# RogueSwipe Complete Bug Fix & Visual Polish Plan
 
-## Overview
+## Context
 
-Full audit and improvement pass covering: critical bug fixes, game-loop correctness (all three modes), mobile/desktop UX, performance, code correctness, save/persistence integrity, game balance, sound effects, pause menu, animated tile transitions, difficulty scaling, and improved leaderboard UX. All changes stay within the existing Phaser 3 + TypeScript + Vite stack.
+RogueSwipe is functionally complete but has critical bugs affecting gameplay and visual issues that make it look unpolished ("AI slop"). The codebase has:
 
----
+- **25 identified bugs** ranging from game-breaking (progress loss, gold not dropping) to balance issues (damage calculations, spawn overflow)
+- **80+ hard-coded color values** scattered across scenes with no design system
+- **No animation system** - all transitions are instant, making the game feel unresponsive
+- **Heavy text strokes** (8px) giving a dated, amateurish appearance
+- **Missing sound cues and visual feedback** for critical game events
 
-## Sub-Task 1 — Critical Bug Fixes
-
-**Status:** [ ] pending
-
-**Intent:**  
-Fix the bugs that break the game for real players: daily run can never be won, boss spawns on top of other tiles, daily/endless mode share a broken "bossHp: 0" config, and there is a silent `||` default that treats bossHp=0 as "not set".
-
-**Expected Outcomes:**
-- Daily run ends with Victory when progress reaches 100 (direct victory, no boss — by design for a quick daily format)
-- Endless run ends only on hero death (correct by design), and the defeat overlay fires correctly
-- Quest mode still triggers boss encounter at 120 progress
-- `findFallbackBossPosition` returns an empty adjacent cell or the hero's cell, never a tile occupied by another entity
-- `bossHp: 0` in MenuScene config for daily/endless no longer accidentally defaults to 12 inside `startBossEncounter`
-- The duplicate victory check in `processTurnLifecycle` (lines 209–212 and 230–232) is collapsed into one
-
-**Todo List:**
-1. In `src/game/engine.ts`, `processTurnLifecycle`: expand the mode-based condition at line 205 to also trigger direct victory for `daily` and `endless` when `progress >= maxProgress` (for daily at 100%, for endless never since maxProgress is 9999)
-2. In `src/game/engine.ts`, `processTurnLifecycle`: add a check — if `mode !== 'quest'` and `progress >= maxProgress`, set `board.status = 'victory'` directly (skip boss encounter)
-3. In `src/game/engine.ts`, `startBossEncounter`: replace `board.bossMaxHp || 12` with `board.bossMaxHp > 0 ? board.bossMaxHp : 12` to correctly distinguish a zero from a missing value
-4. In `src/game/engine.ts`, `findFallbackBossPosition`: invert the logic — return a cell only when it is *empty* (no occupant at all), not when it has a non-hero occupant
-5. In `src/game/engine.ts`, `processTurnLifecycle`: remove the duplicate victory check at lines 230–232 (keep only the one after `spawnTurnTiles`)
-6. In `src/scenes/MenuScene.ts`: set `bossHp: 12` for daily mode (daily now ends via direct victory, not via boss, but bossHp should be non-zero in case modes are reused — actually set it to 0 is fine since daily won't enter boss phase; confirm no entry point)
-
-**Relevant Context:**
-- `src/game/engine.ts:198–233` — `processTurnLifecycle`
-- `src/game/engine.ts:416–434` — `startBossEncounter`
-- `src/game/engine.ts:487–499` — `findFallbackBossPosition`
-- `src/scenes/MenuScene.ts:111–142` — mode config objects
+The goal is to make RogueSwipe both functionally correct and visually polished - a professional game that feels responsive and cohesive, not generated slop.
 
 ---
 
-## Sub-Task 2 — Mobile UX Fixes
+## Phase 1: Critical Bug Fixes
 
-**Status:** [ ] pending
+Fix game-breaking bugs before adding polish. These prevent the game from working correctly.
 
-**Intent:**  
-Make the game fully playable on mobile: fix swipe detection sensitivity, prevent landscape rotation breaking layout, add proper mobile meta tags, and ensure the canvas fills the viewport cleanly on all mobile sizes.
+### 1.1 Quit from Pause Loses Progress ⚠️ BLOCKER
+**File:** `src/scenes/GameScene.ts:279-281`
 
-**Expected Outcomes:**
-- Swipe threshold raised to 50px so accidental micro-swipes don't trigger moves
-- Diagonal swipe resolved correctly: each axis must independently exceed 30px before the dominant axis wins
-- `index.html` has `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, and `viewport-fit=cover` meta tags
-- CSS prevents body scroll and forces portrait-safe rendering
-- No content is clipped on iPhone SE (375×667) or similar small screens — Phaser FIT mode already handles scaling but confirm
+**Problem:** Clicking "Quit to Menu" in pause overlay doesn't call `persistRun()`, losing active run state.
 
-**Todo List:**
-1. In `src/scenes/GameScene.ts`, `setupInput`: change `threshold` from 24 to 50
-2. In `src/scenes/GameScene.ts`, `setupInput` swipe handler: add a minimum per-axis check — only resolve direction if the dominant axis delta exceeds 50px (the 24px general threshold check can be kept as minimum total movement, but use 50px for direction resolution)
-3. In `index.html`: add `<meta name="apple-mobile-web-app-capable" content="yes">`, `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`, and update viewport to `width=device-width, initial-scale=1.0, viewport-fit=cover`
-4. In `src/styles.css`: add `user-select: none` and `-webkit-user-select: none` to body; add `touch-action: manipulation` to the `canvas` rule; add `position: fixed; top: 0; left: 0;` to `#app` to prevent scroll bounce on iOS
+**Fix:** In quit button handler, call `this.persistRun()` before `this.scene.start('MenuScene')`. Only persist if `this.board.status === 'playing'`.
 
-**Relevant Context:**
-- `src/scenes/GameScene.ts:129–154` — swipe input handler
-- `index.html:5` — viewport meta
-- `src/styles.css` — canvas and body rules
+### 1.2 Leaderboard Doesn't Refresh ⚠️ BLOCKER
+**File:** `src/scenes/MenuScene.ts:15-18`
 
----
+**Problem:** `loadLeaderboard()` only runs in `create()`, so completed runs don't appear until page refresh.
 
-## Sub-Task 3 — Desktop UX Fixes
+**Fix:** MenuScene is recreated on `scene.start()`, so this should work. Verify scene is properly restarted in GameScene.ts:591. If not, add explicit scene restart or move leaderboard load to resume lifecycle.
 
-**Status:** [ ] pending
+### 1.3 Gold Doesn't Drop from Enemies ⚠️ CRITICAL
+**File:** `src/game/engine.ts:413`
 
-**Intent:**  
-Polish desktop experience: add a Pause key (Escape), show a pause overlay mid-game, ensure all interactive elements show pointer cursor, and add instructional text about keyboard controls on the menu.
+**Problem:** `goldForTarget()` only returns gold for `kind === 'gold'` tiles. Enemies return 0 even though line 137 calls it expecting gold drops.
 
-**Expected Outcomes:**
-- Pressing Escape during a game shows a pause overlay with "Resume" and "Quit to Menu" buttons
-- Pause overlay correctly blocks further input while visible
-- All interactive Phaser text objects that can be clicked have `useHandCursor: true`
-- MenuScene includes a small "Keyboard: Arrow keys or WASD" hint
+**Fix:** Update `goldForTarget()`:
+```typescript
+case 'goblin': return 2;
+case 'spider': return 3;
+case 'boss': return 10;
+```
 
-**Todo List:**
-1. In `src/scenes/GameScene.ts`: add a `private paused = false` flag and an `Escape` keydown handler that toggles pause
-2. In `src/scenes/GameScene.ts`: add `showPauseOverlay()` and `hidePauseOverlay()` private methods that draw/destroy a dark semi-transparent overlay with Resume and Quit buttons; set `paused = true/false` accordingly
-3. In `src/scenes/GameScene.ts`, `takeTurn` and the spell button handler: guard both with `if (this.paused || this.board.status !== 'playing') return`
-4. In `src/scenes/MenuScene.ts`: add a small text hint near the bottom: `"Desktop: Arrow keys or WASD to move"`
-5. Audit all `this.add.text(...)` calls in both scenes that have interactive zones; ensure every one that is itself interactive has `useHandCursor: true`
+### 1.4 Daily Seed Stale
+**File:** `src/scenes/MenuScene.ts:140`
 
-**Relevant Context:**
-- `src/scenes/GameScene.ts:109–127` — keyboard handler
-- `src/scenes/GameScene.ts:157–166` — takeTurn
-- `src/scenes/MenuScene.ts:190–194` — footer text area
+**Problem:** `seed: dailySeed()` computed at menu creation, not button click. If menu opens before midnight and clicks after, uses wrong seed.
 
----
+**Fix:** Compute seed in button click handler, not in options array initialization.
 
-## Sub-Task 4 — Sound Effects
+### 1.5 Boss Death + Hero Death Race Condition
+**File:** `src/game/engine.ts:246-248`
 
-**Status:** [ ] pending
+**Problem:** Both victory and defeat can fire same turn if boss attack kills hero while hero kills boss.
 
-**Intent:**  
-Add synthesized sound effects using the Phaser Web Audio API (no external audio files needed). Use `Phaser.Sound.WebAudioSoundManager` tone generation or the Web Audio `AudioContext` directly to produce short beeps/tones for: move, combat hit, enemy death, gold pickup, level up, spell use, boss attack, victory, and defeat.
+**Fix:** Add `if (board.status !== 'playing') return` guard at start of `processTurnLifecycle` and before setting victory at line 247. Check status before setting defeat in `bossWeaveAttack:488`.
 
-**Expected Outcomes:**
-- Each game action plays a distinct short audio cue (<300ms)
-- Audio is disabled if browser blocks autoplay; sounds start working after first user interaction (swipe/key)
-- A mute toggle button appears in GameScene (top-right or bottom-left corner)
-- Mute preference is persisted to localStorage
+### 1.6 Web Tile `blocksMovement` Ignored
+**File:** `src/game/engine.ts:310, 116-124`
 
-**Todo List:**
-1. Create `src/game/audio.ts` — export a `SoundEngine` class wrapping the Web Audio API `AudioContext` with methods: `playMove()`, `playHit()`, `playEnemyDeath()`, `playGoldPickup()`, `playLevelUp()`, `playSpell()`, `playBossAttack()`, `playVictory()`, `playDefeat()`; each method creates and plays a short oscillator tone with appropriate frequency, waveform, and envelope; include `mute()`, `unmute()`, and `isMuted(): boolean` methods; persist mute state to `localStorage` key `rogueSwipe.muted`
-2. In `src/scenes/GameScene.ts`: instantiate `SoundEngine` in `create()` and call the appropriate method after each action in `takeTurn`, spell handler, level-up (can be triggered via `TurnResult`), boss attack, victory, and defeat
-3. In `src/scenes/GameScene.ts`: add a mute toggle button (🔊/🔇 text label) in the top-right corner; pressing it calls `soundEngine.mute()` / `soundEngine.unmute()` and updates the label
-4. Extend `TurnResult` in `src/game/types.ts` with an optional `soundCue?: string` field (or a richer enum) so the engine can signal what sound to play without the scene having to infer it from messages
+**Problem:** Web tiles set `blocksMovement: true` but are handled specially, allowing passage. Property has no effect.
 
-**Relevant Context:**
-- `src/game/types.ts:93–97` — `TurnResult` interface
-- `src/scenes/GameScene.ts:157–165` — `takeTurn` where sound calls will be placed
-- No external audio assets — all synthesis via Web Audio API oscillators
+**Fix:** Set `blocksMovement: false` for clarity - webs intentionally don't block, they slow.
 
----
+### 1.7 Boss HP Duplication Risk
+**File:** `src/game/engine.ts:131, 144, 182`
 
-## Sub-Task 5 — Animated Tile Transitions
+**Problem:** Boss HP tracked in both `board.bossHp` and boss tile's `hp`, requiring manual sync. Risk of desync.
 
-**Status:** [ ] pending
+**Fix:** Keep both for UI reasons, but ensure sync immediately after ANY change. Add comment documenting the requirement.
 
-**Intent:**  
-Add smooth visual feedback for tile actions: tiles that die flash briefly before disappearing, the hero tile slides (tweens) toward its destination, gold tiles show a brief sparkle, and the boss telegraph highlights pulse. All animations run within Phaser's tween system and complete before the next input is accepted (or run non-blocking for cosmetic effects).
+### 1.8 XP Multiple Level-Ups Spell Charge
+**File:** `src/game/engine.ts:574`
 
-**Expected Outcomes:**
-- Hero movement shows a brief position tween (80ms) sliding from old cell to new cell
-- Dying enemy/obstacle tiles flash white then fade out over 150ms before being removed from `board.tiles`
-- Gold pickup shows a short scale-up + fade animation on the gold text label
-- Level-up shows a brief glow flash on the hero tile
-- Boss telegraph highlight pulses (alpha oscillation) using a Phaser timeline/tween on the `tileGraphics` object
-- Input is blocked during hero move tween (80ms); cosmetic death animations do not block input
+**Problem:** Code looks correct (charge added inside while loop), but verify multiple level-ups grant multiple charges, not just one per `applyLevelUps()` call.
 
-**Todo List:**
-1. Introduce an `animating = false` flag in `GameScene`; set it true at the start of `takeTurn` and false in the tween `onComplete` callback
-2. In `GameScene.takeTurn`: guard with `if (this.animating || this.paused || ...) return`
-3. Refactor `renderBoard()` to separate tile background drawing (Graphics) from tile text into two layers so tweens can target individual tile containers
-4. For hero movement: store the hero tile's previous world position; after `moveHeroOneTile` updates board state, tween the hero graphic from old world coords to new world coords in 80ms before calling `renderBoard()`
-5. For enemy death: before filtering a tile out of `board.tiles`, run a 150ms alpha-fade tween on that tile's text objects, then remove on complete
-6. For gold pickup: run a 100ms scale tween on the gold tile label (scale 1→1.5→0)
-7. For level-up: run a brief white flash tween on the hero tile fill color
-8. For boss telegraph: add a looping tween on the `tileGraphics` alpha between 0.3 and 0.7 during boss phase (reset each turn)
+**Fix:** Test and verify behavior is correct.
 
-**Relevant Context:**
-- `src/scenes/GameScene.ts:236–244` — `renderBoard()`
-- `src/scenes/GameScene.ts:274–308` — `drawTile()`
-- `src/scenes/GameScene.ts:157–166` — `takeTurn` — animation lock goes here
-- Phaser tween API: `this.tweens.add({ targets, props, duration, onComplete })`
+### 1.9 Endless Spawn Overflow
+**File:** `src/game/engine.ts:429-431`
+
+**Problem:** Endless mode spawns 4 enemies/turn after turn 90. With 5×5 board, can fill quickly.
+
+**Fix:** Already handles with `if (!position) return` at line 437. Consider adding early break if pickEmptyCell fails 3+ times consecutively.
+
+### 1.10 Combat Damage Floor Asymmetry
+**File:** `src/game/engine.ts:381, 383`
+
+**Problem:** Hero always deals ≥1 damage (`Math.max(1, ...)`), enemies can deal 0. Intentional player advantage, but makes high-block hero invincible.
+
+**Fix:** Document as intentional design choice. Optionally make configurable per difficulty.
+
+### 1.11 Cloud Sync Button Hangs
+**File:** `src/scenes/MenuScene.ts:63-71`
+
+**Problem:** No timeout on `syncMetaProgressToCloud()`. If it hangs, button stays disabled forever.
+
+**Fix:** Wrap with `Promise.race` and 8-second timeout. Show "Sync timed out" and re-enable button on timeout.
+
+### 1.12 Leaderboard Duplicate Too Strict
+**File:** `src/game/persistence.ts:97-99`
+
+**Problem:** Rejects entries with same score+mode+turns, even if legitimate separate runs.
+
+**Fix:** Add timestamp check - only dedupe if `existing.createdAt` within 1 second of new entry (prevents double-submit on refresh, allows actual duplicates).
+
+### 1.13 Level-Up Sound Never Plays
+**File:** `src/game/audio.ts:134`, `src/game/engine.ts`
+
+**Problem:** `playFromTurnResult` checks for "Level up" in message, but `applyLevelUps` doesn't add this message.
+
+**Fix:** In `applyLevelUps`, add "Level up!" to messages array when level increases, OR add `leveledUp: boolean` flag to TurnResult.
 
 ---
 
-## Sub-Task 6 — Difficulty Scaling
+## Phase 2: Visual Design System
 
-**Status:** [ ] pending
+Eliminate hard-coded colors and create cohesive theme. This is the most visible "AI slop" indicator.
 
-**Intent:**  
-Make the game progressively harder: XP threshold scales with level so the hero doesn't become invincible, boss stats scale with hero level, enemy spawn weights shift toward harder enemies as turns increase, and endless mode gets harder over time.
+### 2.1 Create Theme Constants
+**New File:** `src/game/theme.ts`
 
-**Expected Outcomes:**
-- XP required for each level = `100 + (heroLevel - 1) * 20` (e.g. level 1→2: 100 XP, level 2→3: 120 XP, etc.)
-- Boss HP at spawn = `max(board.bossMaxHp, 8 + board.heroLevel * 2)` so a high-level hero still faces a challenging boss
-- Goblin/spider spawn probability increases every 20 turns in all modes (via seeded RNG, not random)
-- Endless mode spawns increase by 1 every 30 turns (capped at 4 per turn)
-- Web tiles remain useful — webs now slow the hero by costing an extra turn action to break (add a `slowed` status to `BoardState`)
+**Purpose:** Centralize all colors, spacing, typography constants.
 
-**Todo List:**
-1. In `src/game/engine.ts`, `applyLevelUps`: change XP drain from flat 100 to `100 + (board.heroLevel - 1) * 20`; update the `while` loop condition accordingly
-2. In `src/game/engine.ts`, `startBossEncounter`: set boss tile HP to `Math.max(board.bossMaxHp, 8 + board.heroLevel * 2)` instead of flat bossMaxHp; also set boss attack to `1 + Math.floor(board.heroLevel / 2)` in the tile created by `createTile` override (or pass stats into `createTile`)
-3. In `src/game/engine.ts`, `spawnTurnTiles`: make spawn weights dynamic — compute a `difficultyTier = Math.floor(board.turn / 20)` and shift the spawn pool toward heavier enemies: tier 0 = `[goblin, goblin, spider, rock, web, gold]`, tier 1 = `[goblin, goblin, goblin, spider, spider, rock]`, tier 2+ = `[goblin, goblin, spider, spider, spider, rock]`
-4. In `src/game/engine.ts`, `spawnTurnTiles` for endless mode: compute `dynamicSpawns = board.spawnsPerTurn + Math.floor(board.turn / 30)` capped at 4, use that instead of `board.spawnsPerTurn` directly
-5. Add a `heroIsSlowed` boolean to `BoardState` in `src/game/types.ts`; in `moveHeroOneTile` when hero steps on or attacks a web, set `board.heroIsSlowed = true`; in `processTurnLifecycle`, if `heroIsSlowed` is true, skip the regular `spawnTurnTiles` call and just clear the flag (net effect: hero loses a spawn-cycle worth of progress)
-6. Update `migrateRunSnapshot` in `persistence.ts` to default `heroIsSlowed: false`
+**Structure:**
+```typescript
+export const COLORS = {
+  background: { primary: 0x08131c, overlay: 0x000000, panel: 0xd7def0 },
+  text: { primary: '#f2f6ff', secondary: '#b4c4d9', tertiary: '#8aa0b9', ... },
+  tile: {
+    hero: { fill: 0xb6d6ff, stroke: 0xffffff, icon: 0x1f4d8d },
+    goblin: { fill: 0xb55f5f, stroke: 0xffb3b3, icon: 0x4d0f0f },
+    // ... all tile colors
+  },
+  progress: { border: 0x4f667d, fillRun: 0x7ec8ff, fillBoss: 0xff8080 },
+  button: { success: {}, danger: {}, neutral: {}, spell: {} },
+  mode: { quest: '#8aa0b9', daily: '#9fe7b4', endless: '#e7c79f' }
+};
 
-**Relevant Context:**
-- `src/game/engine.ts:532–541` — `applyLevelUps`
-- `src/game/engine.ts:400–414` — `spawnTurnTiles`
-- `src/game/engine.ts:416–434` — `startBossEncounter`
-- `src/game/types.ts:67–91` — `BoardState`
+export const SPACING = {
+  xs: 8, sm: 12, md: 18, lg: 24, xl: 32,
+  button: { sm: {x: 16, y: 8}, md: {x: 18, y: 12}, lg: {x: 28, y: 14} }
+};
 
----
+export const TYPOGRAPHY = {
+  size: { xs: '14px', sm: '16px', base: '18px', ... huge: '56px' },
+  stroke: { none: 0, light: 2, normal: 4, bold: 6 },
+  family: 'Georgia, serif'
+};
 
-## Sub-Task 7 — Performance Optimizations
+export const ANIMATION = {
+  fast: 80, normal: 150, slow: 300,
+  easeOut: 'Cubic.easeOut', ...
+};
+```
 
-**Status:** [ ] pending
+### 2.2 Replace Hard-Coded Colors in GameScene.ts
+**File:** `src/scenes/GameScene.ts`
 
-**Intent:**  
-Reduce per-frame allocation and GC pressure, particularly tile text object churn and the full-board Graphics redraw.
+**Changes:**
+- Import theme: `import { COLORS, SPACING, TYPOGRAPHY, ANIMATION } from '../game/theme';`
+- Replace 40+ hard-coded colors at lines: 81, 87-89, 95, 103, 110, 129, 141, 250-251, 256, 262-263, 270-271, 300-301, 331, 399, 401, 403, 428, 444, 454, 460, 465, 474, 482, 487-503, 538-539, 544, 550, 569, 578, 585-586
+- Replace `strokeThickness: 8` with `TYPOGRAPHY.stroke.bold` (value 4-5 for modern look)
+- Use `SPACING` constants instead of magic numbers (18, 22, 28, 14, etc.)
 
-**Expected Outcomes:**
-- Tile text objects are reused across renders instead of destroyed and recreated
-- Graphics `clear()` + redraw still used (acceptable for 5×5 grid) but `tileTexts` pool avoids allocation each turn
-- `JSON.parse(JSON.stringify(...))` clone in `cloneBoardState` replaced with a structured clone using `structuredClone()` (available in modern browsers, supported by the ES2022 target in tsconfig)
-- Cloud sync `fetch` has an `AbortController` timeout of 8 seconds
+### 2.3 Replace Hard-Coded Colors in MenuScene.ts
+**File:** `src/scenes/MenuScene.ts`
 
-**Todo List:**
-1. In `src/scenes/GameScene.ts`, replace `cloneBoardState` implementation: swap `JSON.parse(JSON.stringify(boardState))` for `structuredClone(boardState)` — same result, faster and more spec-compliant
-2. In `src/scenes/GameScene.ts`: pre-allocate a pool of `Phaser.GameObjects.Text` objects at `create()` time (25 for hp + 25 for labels = 50 max), reuse them in `drawTile` by index, hide unused ones each render instead of destroying
-3. In `src/game/cloud.ts`, `syncMetaProgressToCloud`: wrap the `fetch` call with `AbortController` and `setTimeout(controller.abort, 8000)`; catch the `AbortError` and return `{ synced: false, message: 'Cloud sync timed out.' }`
+**Changes:**
+- Import theme
+- Replace 40+ hard-coded colors at lines: 21, 26-27, 34, 42, 50, 58-59, 77-78, 90-92, 99, 112, 120, 162, 166, 171, 178, 190-199, 207, 213
+- Reduce title stroke from 8px to 4px (line 29)
+- Use `SPACING` constants for padding and positioning
+- Use `TYPOGRAPHY.size` for font sizes
 
-**Relevant Context:**
-- `src/scenes/GameScene.ts:29` — `tileTexts` array declaration
-- `src/scenes/GameScene.ts:311–316` — `clearTileTexts`
-- `src/scenes/GameScene.ts:439–441` — `cloneBoardState`
-- `src/game/cloud.ts:47–84` — `syncMetaProgressToCloud`
+### 2.4 Update Typography - Reduce Heavy Strokes
+**Goal:** Modern, clean look instead of dated heavy outlines
 
----
-
-## Sub-Task 8 — Save & Persistence Fixes
-
-**Status:** [ ] pending
-
-**Intent:**  
-Harden the save layer: prevent duplicate leaderboard entries on rapid refresh, validate loaded data shapes, and add the new `BoardState` fields from Sub-Tasks 5–6 to the migration path.
-
-**Expected Outcomes:**
-- Leaderboard deduplicates within a 500ms window (prevents double-submission on page refresh during finalize)
-- `loadSaveData` logs (console.warn) when it falls back to empty data due to parse error
-- All new `BoardState` fields added in Sub-Task 6 (`heroIsSlowed`) have migration defaults in `migrateRunSnapshot`
-- `schemaVersion` bumped to 4 after all new fields are added; old v3 key added to `LEGACY_STORAGE_KEYS`
-
-**Todo List:**
-1. In `src/game/persistence.ts`, `recordLeaderboardEntry`: before pushing the new entry, filter out any existing entry where `score === entry.score && mode === entry.mode && turns === entry.turns` (exact duplicate guard)
-2. In `src/game/persistence.ts`, `loadSaveData` catch block: add `console.warn('rogueSwipe: failed to load save data, starting fresh', e)` before returning empty
-3. In `src/game/persistence.ts`, `migrateRunSnapshot`: add defaults for `heroIsSlowed` (false)
-4. After all Sub-Task 6 fields are confirmed, bump `CURRENT_SCHEMA_VERSION` from 3 to 4, add `'rogueSwipe.save.v3'` to `LEGACY_STORAGE_KEYS`, and update `STORAGE_KEY` to `'rogueSwipe.save.v4'`
-
-**Relevant Context:**
-- `src/game/persistence.ts:3–7` — version constants
-- `src/game/persistence.ts:92–107` — `recordLeaderboardEntry`
-- `src/game/persistence.ts:164–181` — `migrateRunSnapshot`
+**Changes:**
+- Title text: 4px stroke (not 8px)
+- Heading text: 3px stroke or none
+- Body text: no stroke
+- Use subtle shadows if depth needed
 
 ---
 
-## Sub-Task 9 — Improved Leaderboard UX
+## Phase 3: Animation & Polish ("Juice")
 
-**Status:** [ ] pending
+Add responsive animations and visual feedback. Makes game feel professional and responsive.
 
-**Intent:**  
-Replace the minimal 3-line score display in MenuScene with a proper full leaderboard panel showing all 10 entries, mode badges, a victory crown for winning runs, and a clear "no scores yet" state. Also improve the end-game overlay to show the player's final score and rank.
+### 3.1 Refactor Tile Rendering to Support Animation
+**File:** `src/scenes/GameScene.ts`
 
-**Expected Outcomes:**
-- MenuScene shows up to 10 leaderboard entries in a scrollable-styled panel (fixed height, overflow via Phaser mask or just show top 5 with a "+N more" line)
-- Each entry shows: rank, mode badge, score, turns, level, and a ✓ or ✗ for victory
-- Highlight: the most recent run is highlighted (by `id` passed through scene data)
-- End-game overlay in GameScene shows final score, rank in leaderboard, and a breakdown (turns × 12, gold × 25, etc.)
-- "No runs submitted yet" state styled consistently
+**Problem:** Tiles drawn with Graphics primitives, can't animate individual tiles.
 
-**Todo List:**
-1. In `src/scenes/MenuScene.ts`: replace the `leaderboard.slice(0, 3).forEach(...)` block with a full panel rendering up to 5 entries with rank, mode badge text, score, turns, level, and victory check/cross; add "+N more" if leaderboard has >5 entries
-2. In `src/scenes/GameScene.ts`, `finalizeRun`: capture the returned leaderboard and compute player rank; store rank on the instance (`private lastRunRank = 0`)
-3. In `src/scenes/GameScene.ts`, `showEndState`: extend the overlay to include a score breakdown panel showing final score, rank, and per-category contributions (turns, gold, level, hp, bonuses)
-4. Pass `lastRunId` through `scene.start('MenuScene', { highlightId })` and in `MenuScene.create()` highlight that entry with a different background color
+**Solution:**
+- Create `tileContainers: Map<string, Phaser.GameObjects.Container>` to store Container per tile
+- Each Container has Graphics for background + Text for icon
+- Allows tweening individual tile alpha, scale, position
+- Render loop updates existing containers or creates new ones
 
-**Relevant Context:**
-- `src/scenes/MenuScene.ts:87–108` — current leaderboard rendering block
-- `src/scenes/GameScene.ts:409–430` — `finalizeRun`
-- `src/scenes/GameScene.ts:349–394` — `showEndState`
-- `src/game/persistence.ts:73–107` — leaderboard load/record
+### 3.2 Tile Spawn Animation
+**Implementation:** New tiles start at alpha 0, scale 0.5, tween to alpha 1, scale 1 over 150ms with 'Back.easeOut' easing.
+
+### 3.3 Tile Death Animation
+**Implementation:** Flash white (tint 0xffffff) for 50ms, then fade alpha to 0 over 150ms. Remove after animation completes.
+
+### 3.4 Hero Movement Animation
+**Implementation:** 
+- Store previous hero position before move
+- Tween container from old coords to new over 80ms
+- Block input during animation: `if (this.animatingHero) return;`
+- Use 'Cubic.easeOut' easing
+
+### 3.5 Button Press Animation
+**Files:** `src/scenes/GameScene.ts`, `src/scenes/MenuScene.ts`
+
+**Implementation:** On all buttons, scale to 0.95 on pointerdown, yoyo back over 50ms. Add hover state with lighter background.
+
+### 3.6 Progress Bar Animation
+**File:** `src/scenes/GameScene.ts`
+
+**Implementation:** Store `prevProgress`, tween from old to new value over 200ms using `tweens.addCounter`.
+
+### 3.7 Boss Attack Telegraph Pulse
+**File:** `src/scenes/GameScene.ts:429`
+
+**Implementation:** When countdown ≤ 1, add looping tween on telegraph alpha between 0.5 and 1.0 every 300ms. Makes danger obvious.
+
+### 3.8 End State Fade-In
+**File:** `src/scenes/GameScene.ts`
+
+**Implementation:** Start overlay/panel at alpha 0, tween to 1 over 300ms. Cascade text: title → description → score with 100ms stagger.
+
+### 3.9 Level-Up Flash
+**File:** `src/scenes/GameScene.ts`
+
+**Implementation:** When level increases, tween hero scale 1 → 1.15 → 1 over 200ms. Play sound.
 
 ---
 
-## Sub-Task 10 — Score Balance Fix & README Update
+## Phase 4: Sound & Feedback
 
-**Status:** [ ] pending
+Complete sound system - adds missing audio cues for game events.
 
-**Intent:**  
-Fix the score formula so victory is always worth more than equivalent survival time, then update README.md to document all improvements, the new audio system, pause menu, difficulty scaling, and developer commands.
+### 4.1 Add Missing Sound Methods
+**File:** `src/game/audio.ts`
 
-**Expected Outcomes:**
-- Victory bonus raised so that winning in N turns always outscores losing in N+20 turns
-- Score formula: `turn * 10 + gold * 20 + heroLevel * 60 + heroHp * 15 + victoryBonus(800) + modeBonus` (mode bonus: quest 150, daily 300, endless 200)
-- README updated with all new features, updated "Current state" section, and correct commands
+**New methods:**
+- `playWallBump()` - frequency 120, square wave, 80ms
+- `playWeb()` - frequency 180, triangle, 150ms  
+- `playBossSpawn()` - deep rumble, frequency 80 sawtooth, 600ms
+- `playPause()` - frequency 440, sine, 100ms
+- `playDamageTaken()` - frequency 240, sawtooth, 150ms
 
-**Todo List:**
-1. In `src/scenes/GameScene.ts`, `computeRunScore`: update formula constants to the new values above
-2. Update `README.md`: replace "Current state" section with comprehensive feature list including pause menu, sound effects, animations, difficulty scaling, all three modes working correctly, and leaderboard improvements
-3. Update "Next steps" section to reflect what remains (if anything)
+### 4.2 Hook Up Sound Events
+**File:** `src/scenes/GameScene.ts`
 
-**Relevant Context:**
-- `src/scenes/GameScene.ts:443–455` — `computeRunScore`
-- `README.md` — full file rewrite of current state section
+**Changes:**
+- Wall bump: In `takeTurn`, check if `!result.acted && !result.moved`, play `playWallBump()`
+- Web: Check messages for "web", play `playWeb()`
+- Boss spawn: Add message "A boss appears!" when phase changes, play `playBossSpawn()`
+- Pause: In `togglePause`, play `playPause()`
+- Damage taken: Compare hero HP before/after turn, play `playDamageTaken()` if decreased
+
+### 4.3 Fix Level-Up Sound
+**File:** `src/game/engine.ts`
+
+**Change:** In `applyLevelUps`, add "Level up!" message to TurnResult.messages when level increases.
+
+---
+
+## Phase 5: UX Improvements
+
+Fix remaining UX issues and polish quality-of-life features.
+
+### 5.1 Remove ASCII Art Score Display
+**File:** `src/scenes/GameScene.ts:556-572`
+
+**Change:** Replace ASCII dividers with clean, aligned score breakdown using proper spacing.
+
+### 5.2 Fix Mute Button Emoji
+**File:** `src/scenes/GameScene.ts:326-332`
+
+**Change:** Replace emoji 🔊/🔇 with text labels "Sound On"/"Sound Off" or draw speaker icon with Graphics. Emoji rendering varies by platform.
+
+### 5.3 Improve Spacing Consistency
+**Files:** `src/scenes/GameScene.ts`, `src/scenes/MenuScene.ts`
+
+**Change:** Replace all magic spacing numbers (18, 22, 28, 14, etc.) with `SPACING` constants from theme.
+
+### 5.4 Optimize Text Pool
+**File:** `src/scenes/GameScene.ts:15`
+
+**Change:** Reduce `TILE_TEXT_POOL_SIZE` from 50 to 30. Add warning if pool exhausts.
+
+### 5.5 Improve Boss Telegraph Visibility
+**File:** `src/scenes/GameScene.ts:429`
+
+**Change:** Increase alpha from 0.45 to 0.7-0.8. Use pulse animation (Phase 3.7) to draw attention.
+
+### 5.6 Add Quit Confirmation
+**File:** `src/scenes/GameScene.ts`
+
+**Change:** When clicking "Quit to Menu" in pause, show confirmation: "Save and quit? Your progress will be saved." Buttons: "Save & Quit" / "Cancel". Prevents accidental quits.
+
+---
+
+## Implementation Order
+
+1. **Phase 1** (Bug fixes) - MUST be first, broken game can't be polished
+2. **Phase 2** (Theme system) - Create theme.ts, then update scenes
+3. **Phase 3** (Animations) - Tile refactor (3.1) first unlocks all other animations
+4. **Phase 4** (Sound) - Add methods (4.1) first, then hook up events
+5. **Phase 5** (UX) - Independent changes, can be done in any order
+
+**Critical Path:** Phase 1 → Phase 2 → Phase 3.1 → rest can be parallelized
+
+---
+
+## Verification
+
+### After Phase 1:
+- Quit from pause → resume → run continues from correct state ✓
+- Complete run → return to menu → leaderboard shows new entry ✓
+- Kill enemies → verify gold awarded (goblin: 2, spider: 3) ✓
+- Start daily run at different times → seed changes correctly ✓
+- Boss fight simultaneous death → only one status set ✓
+- Cloud sync → wait 10s → timeout handled ✓
+- Two identical-score runs → both appear on leaderboard ✓
+
+### After Phase 2:
+- Visual inspection: all colors use theme constants ✓
+- Search for remaining hard-coded values: `0x[0-9a-f]{6}`, `#[0-9a-f]{6}` ✓
+- Typography consistent across all elements ✓
+- No magic spacing numbers remain ✓
+
+### After Phase 3:
+- Run `npm run dev` and test game flow:
+  - Tiles spawn with fade animation ✓
+  - Tiles die with flash + fade ✓
+  - Hero moves smoothly between cells ✓
+  - Buttons scale on press ✓
+  - Progress bar animates ✓
+  - Boss telegraph pulses when danger imminent ✓
+  - End state fades in ✓
+  - Level-up shows flash ✓
+- Verify input blocking feels responsive, not laggy ✓
+
+### After Phase 4:
+- All game actions produce appropriate sounds ✓
+- Mute button works and persists ✓
+- Level-up sound plays correctly ✓
+- No sound overlap/clipping ✓
+
+### After Phase 5:
+- Score display readable and aligned ✓
+- Mute button renders consistently ✓
+- Boss telegraph clearly visible ✓
+- Quit confirmation works ✓
+- Test pool doesn't exhaust in long game ✓
+
+### Final Integration Test:
+- Play complete run in each mode (Quest, Daily, Endless)
+- Verify save/load works
+- Test on mobile viewport (responsive layout)
+- Verify cloud sync (if configured)
+- Check leaderboard with 10+ entries
+- Verify boss fight mechanics
+- Test pause/resume/quit flow
+
+---
+
+## Critical Files
+
+- `src/game/engine.ts` - Core game logic, bug fixes
+- `src/scenes/GameScene.ts` - Main gameplay scene, visual polish
+- `src/scenes/MenuScene.ts` - Menu and leaderboard, visual polish
+- `src/game/audio.ts` - Sound system additions
+- `src/game/persistence.ts` - Save/load and leaderboard fixes
+- `src/game/theme.ts` - NEW FILE - design system constants
+
+---
+
+## Outcome & Deviations
+
+All five phases are implemented. Two items were not built as written, and one extra file was needed.
+
+**Extra file: `src/scenes/ui.ts`.** The plan put everything in `theme.ts`, but shared *widgets* (`createButton`, `attachButtonFeedback`, `cascadeIn`) need Phaser, and `src/game/` must stay Phaser-free. Tokens live in `game/theme.ts`; widgets live in `scenes/ui.ts`.
+
+**3.4 — input is not blocked during hero movement.** The plan called for `if (this.animatingHero) return;`. That fails the plan's own acceptance criterion, "verify input blocking feels responsive, not laggy": an 80 ms deaf window silently eats fast swipes. Instead a new swipe removes the in-flight move tween and retargets it, so every input registers and the hero keeps up. No dropped turns, no lag.
+
+**3.3 — the death effect is an expanding ring above the hero, not a flash beneath it.** Built as specified (white fill, fade in place) it was *invisible in every case*, which cost the most time here to catch. `moveHeroOneTile` advances the hero onto any tile it kills in the same turn, and the hero draws above dying tiles, so the flash spent its whole 200 ms life hidden under the arriving hero. It is now a hollow stroked ring at `DEPTH.dyingTile > DEPTH.hero` that swells past the cell: always visible, and because the middle is hollow it frames the hero's arrival instead of covering it. Do not "correct" that depth ordering back.
+
+**5.4 — moot.** The text pool it optimizes was deleted by 3.1; tiles are per-tile Containers now, so there is no pool to size or exhaust.
+
+### Verified live in the browser
+
+- **Quest** played to the boss and won — turn 22, score 2025 (220+480+240+135+150+800), rank #3. Defeat path also checked (score 4030).
+- **Daily** won at turn 13 via progress fill with no boss — score 1655 (130+140+120+165+300+800).
+- **Endless** survived to turn 64 / level 10 before dying, score 3960 — the spawn ramp works and the mode still ends only on death.
+- Save/resume across all three modes; pause, quit-confirm, and Escape backing out of the confirm without resuming.
+- Mute toggles both ways and persists to `rogueSwipe.muted`.
+- Every animation confirmed on screen, including the death ring (caught by freezing `requestAnimationFrame` mid-tween).
+- `npm run build` clean; no console errors from any new code.

@@ -2,6 +2,26 @@ import { hashString, mulberry32 } from './random';
 import type { BoardState, Direction, GameMode, SpellResult, Tile, TileKind, TurnResult } from './types';
 
 const BOARD_SIZE = 5;
+/** Raw damage of a boss weave sweep, before the hero's block is subtracted. */
+const BOSS_WEAVE_DAMAGE = 3;
+/** Turns between boss weave sweeps. */
+const BOSS_ATTACK_INTERVAL = 4;
+
+// Combat and progression budget for a Quest run, which fills its progress track in ~18 turns.
+// A level-1 hero trades 2 HP for a goblin (12 XP) and 4 HP for a spider (15 XP), and only ~3-4
+// kills are actually reachable in those 18 turns — which is why the XP thresholds are as low as
+// they are. The target is arriving at the Stone-Weaver around level 3, a bit over half HP, with
+// two fireball charges banked. These values are one connected budget: changing any of them
+// invalidates the boss matchup documented in startBossEncounter.
+const HERO_BASE_HP = 8;
+const HERO_BASE_ATTACK = 2;
+/** Max HP gained per level. */
+const LEVEL_UP_MAX_HP = 2;
+/**
+ * HP restored per level. The single most sensitive number here — it sets how much HP the hero has
+ * left when the boss appears, and moving it by 1 swings the win rate by roughly 10%.
+ */
+const LEVEL_UP_HEAL = 5;
 
 const DEFAULT_PROGRESS_PER_TURN: Record<GameMode, number> = {
   quest: 8,
@@ -28,8 +48,8 @@ export function createInitialBoardWithBonuses(seed: string, mode: GameMode = 'da
     kind: 'hero',
     x: 2,
     y: 2,
-    hp: 5 + maxHpBonus,
-    attack: 1 + attackBonus,
+    hp: HERO_BASE_HP + maxHpBonus,
+    attack: HERO_BASE_ATTACK + attackBonus,
     block: 0,
     blocksMovement: false,
     immovable: false
@@ -99,6 +119,7 @@ export function moveHeroOneTile(board: BoardState, direction: Direction): TurnRe
   const messages: string[] = [];
   let acted = false;
   let moved = false;
+  let snared = false;
 
   if (!occupant) {
     hero.x = next.x;
@@ -114,19 +135,19 @@ export function moveHeroOneTile(board: BoardState, direction: Direction): TurnRe
     moved = true;
     messages.push(`You picked up ${occupant.value ?? 1} gold.`);
   } else if (occupant.kind === 'web') {
-    // Webs slow the hero — they still get removed but the hero loses a spawn cycle
+    // A web costs the hero the whole turn: the strands tear apart but the hero stays put while
+    // the rest of the board still spawns and acts. That makes the tile a genuine hazard rather
+    // than the free spawn-skip it used to be.
     board.tiles = board.tiles.filter((tile) => tile.id !== occupant.id);
-    hero.x = next.x;
-    hero.y = next.y;
-    board.heroIsSlowed = true;
     acted = true;
-    moved = true;
-    messages.push('You tore through a web. Slowed!');
+    snared = true;
+    messages.push('A web snares you. You tear free but lose your step.');
   } else if (occupant.blocksMovement && occupant.kind !== 'hero') {
     const combatOutcome = resolveCombat(hero, occupant);
     acted = true;
     messages.push(combatOutcome.message);
 
+    // board.bossHp mirrors the boss tile's hp for the UI — resync after EVERY change to the tile
     if (occupant.kind === 'boss') {
       board.bossHp = Math.max(0, occupant.hp);
     }
@@ -135,7 +156,15 @@ export function moveHeroOneTile(board: BoardState, direction: Direction): TurnRe
       board.tiles = board.tiles.filter((tile) => tile.id !== occupant.id);
       board.xp += xpForTarget(occupant.kind);
       board.gold += goldForTarget(occupant.kind);
-      applyLevelUps(board, hero);
+
+      if (goldForTarget(occupant.kind) > 0) {
+        messages.push(`Looted ${goldForTarget(occupant.kind)} gold.`);
+      }
+
+      if (applyLevelUps(board, hero)) {
+        messages.push('Level up!');
+      }
+
       hero.x = next.x;
       hero.y = next.y;
       moved = true;
@@ -145,13 +174,17 @@ export function moveHeroOneTile(board: BoardState, direction: Direction): TurnRe
       }
     }
 
+    // The hero dying takes precedence: a mutual kill must not also grant victory
     if (combatOutcome.heroDied) {
       board.status = 'defeat';
     }
   }
 
   if (acted) {
-    processTurnLifecycle(board);
+    // The snare notice describes the turn that just resolved, so it is rewritten on every turn
+    // the hero actually spends and left untouched by a no-op like a wall bump.
+    board.heroIsSlowed = snared;
+    processTurnLifecycle(board, messages);
   }
 
   return { acted, moved, messages };
@@ -183,6 +216,9 @@ export function useBackpackSpell(board: BoardState): SpellResult {
 
       if (target.hp <= 0) {
         board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
+        board.xp += xpForTarget('boss');
+        board.gold += goldForTarget('boss');
+        applyLevelUps(board, hero);
         board.status = 'victory';
         return { used: true, message: 'Fireball scorched the boss.' };
       }
@@ -196,8 +232,14 @@ export function useBackpackSpell(board: BoardState): SpellResult {
       board.tiles = board.tiles.filter((tile) => tile.id !== target.id);
       board.xp += xpForTarget(target.kind);
       board.gold += goldForTarget(target.kind);
-      applyLevelUps(board, hero);
-      return { used: true, message: `Fireball destroyed the ${target.kind}.` };
+      const leveled = applyLevelUps(board, hero);
+
+      return {
+        used: true,
+        message: leveled
+          ? `Fireball destroyed the ${target.kind}. Level up!`
+          : `Fireball destroyed the ${target.kind}.`
+      };
     }
   }
 
@@ -205,44 +247,46 @@ export function useBackpackSpell(board: BoardState): SpellResult {
   return { used: true, message: 'Fireball restored 2 HP.' };
 }
 
-function processTurnLifecycle(board: BoardState): void {
+function processTurnLifecycle(board: BoardState, messages: string[]): void {
+  // A death resolved during the action itself ends the run — never run a lifecycle on a finished board
+  if (board.status !== 'playing') {
+    return;
+  }
+
   board.turn += 1;
 
   if (board.phase === 'run') {
     board.progress = Math.min(board.maxProgress, board.progress + board.progressPerTurn);
-  }
 
-  if (board.phase === 'run' && board.progress >= board.maxProgress && board.status === 'playing') {
-    if (board.mode === 'quest') {
-      startBossEncounter(board);
-    } else {
-      // daily and endless reach victory directly when progress fills
-      board.status = 'victory';
-      return;
+    if (board.progress >= board.maxProgress) {
+      if (board.mode === 'quest') {
+        startBossEncounter(board);
+        messages.push('The Stone-Weaver awakens!');
+      } else {
+        // daily and endless reach victory directly when progress fills
+        board.status = 'victory';
+        return;
+      }
     }
   }
 
-  if (board.status === 'playing') {
-    if (board.heroIsSlowed) {
-      // Consume the slow — skip spawning this turn
-      board.heroIsSlowed = false;
-    } else {
-      spawnTurnTiles(board);
-    }
+  if (board.status !== 'playing') {
+    return;
   }
 
-  if (board.phase === 'boss' && board.status === 'playing') {
+  spawnTurnTiles(board);
+
+  if (board.phase === 'boss') {
     board.bossTurnsElapsed += 1;
     board.bossAttackCountdown -= 1;
 
     if (board.bossAttackCountdown <= 0) {
-      const nextTiles = new Map(board.tiles.map((tile) => [tile.id, { ...tile }]));
-      bossWeaveAttack(board, nextTiles);
-      board.tiles = [...nextTiles.values()];
+      bossWeaveAttack(board, messages);
       scheduleBossAttack(board);
     }
   }
 
+  // Only claim victory if the boss weave didn't just kill the hero
   if (board.phase === 'boss' && board.bossHp <= 0 && board.status === 'playing') {
     board.status = 'victory';
   }
@@ -256,8 +300,8 @@ function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
         kind,
         x,
         y,
-        hp: 5,
-        attack: 1,
+        hp: HERO_BASE_HP,
+        attack: HERO_BASE_ATTACK,
         block: 0,
         blocksMovement: false,
         immovable: false
@@ -307,7 +351,8 @@ function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
         hp: 1,
         attack: 0,
         block: 0,
-        blocksMovement: true,
+        // Webs deliberately do not block — stepping in costs the turn instead of starting a fight
+        blocksMovement: false,
         immovable: true
       };
     case 'gold':
@@ -329,8 +374,9 @@ function createTile(kind: TileKind, x: number, y: number, index: number): Tile {
         kind,
         x,
         y,
+        // hp is overwritten by startBossEncounter with the level-scaled value
         hp: 12,
-        attack: 2,
+        attack: 3,
         block: 1,
         blocksMovement: true,
         immovable: false
@@ -378,9 +424,13 @@ function resolveCombat(attacker: Tile, defender: Tile): { targetDied: boolean; h
     return { targetDied: false, heroDied: false, message: '' };
   }
 
+  // Both sides floor at 1 so neither becomes untouchable: the hero always chips at least 1 off a
+  // target, and a levelled-up block reduces an enemy counter without ever nullifying it. Inert
+  // tiles (rocks, boss-woven stone) have no attack at all and are excluded from the floor, so
+  // walking into scenery is still free.
   const damageToTarget = Math.max(1, attacker.attack - defender.block);
   const targetRemainingHp = defender.hp - damageToTarget;
-  const heroDamage = Math.max(0, defender.attack - attacker.block);
+  const heroDamage = defender.attack > 0 ? Math.max(1, defender.attack - attacker.block) : 0;
   const heroRemainingHp = attacker.hp - heroDamage;
 
   attacker.hp = heroRemainingHp;
@@ -401,16 +451,30 @@ function xpForTarget(kind: TileKind): number {
       return 15;
     case 'rock':
       return 4;
+    case 'boss':
+      return 40;
     case 'gold':
     case 'web':
-    case 'boss':
     case 'hero':
       return 0;
   }
 }
 
 function goldForTarget(kind: TileKind): number {
-  return kind === 'gold' ? 1 : 0;
+  switch (kind) {
+    case 'goblin':
+      return 2;
+    case 'spider':
+      return 3;
+    case 'boss':
+      return 10;
+    case 'rock':
+    case 'web':
+    case 'gold':
+    case 'hero':
+      // Gold tiles pay out through their own `value` on pickup, not through combat
+      return 0;
+  }
 }
 
 function spawnTurnTiles(board: BoardState): void {
@@ -444,10 +508,13 @@ function spawnTurnTiles(board: BoardState): void {
 
 function startBossEncounter(board: BoardState): void {
   const random = mulberry32(hashString(`${board.seed}:boss`));
-  // Scale boss HP with hero level so it stays challenging after upgrades
+  // Scale boss HP with hero level so it stays challenging after upgrades. At the expected level 3
+  // that lands on 14 HP: the hero's 4 attack against 1 block is 5 swings of melee taking 2 back
+  // each, which a hero arriving at ~9 HP does not survive on melee alone — the banked fireballs
+  // (3 damage each) are what close the gap. Spending charges on spiders earlier is a real trade.
   const baseHp = board.bossMaxHp > 0 ? board.bossMaxHp : 12;
   const bossHp = Math.max(baseHp, 8 + board.heroLevel * 2);
-  const bossPosition = pickEmptyCell(board.tiles, random) ?? findFallbackBossPosition(board.tiles);
+  const bossPosition = pickEmptyCell(board.tiles, random) ?? clearCellForBoss(board, random);
 
   board.phase = 'boss';
   board.bossTurnsElapsed = 0;
@@ -456,23 +523,52 @@ function startBossEncounter(board: BoardState): void {
   board.bossHp = bossHp;
   board.bossMaxHp = bossHp;
 
-  if (!bossPosition) {
-    board.status = 'victory';
-    return;
+  const boss = createTile('boss', bossPosition.x, bossPosition.y, board.turn + board.tiles.length + 99);
+  boss.hp = bossHp;
+  board.tiles.push(boss);
+}
+
+/**
+ * Last resort when the board is completely full at boss time: crush a non-hero tile to make room.
+ * A packed board must never hand the player a free victory.
+ */
+function clearCellForBoss(board: BoardState, random: () => number): { x: number; y: number } {
+  const hero = board.tiles.find((tile) => tile.kind === 'hero');
+  const candidates = board.tiles.filter((tile) => tile.kind !== 'hero');
+
+  if (candidates.length === 0) {
+    // Only the hero is on the board — drop the boss in any cell the hero isn't standing on
+    for (let y = 0; y < BOARD_SIZE; y += 1) {
+      for (let x = 0; x < BOARD_SIZE; x += 1) {
+        if (hero?.x !== x || hero?.y !== y) {
+          return { x, y };
+        }
+      }
+    }
+
+    return { x: 0, y: 0 };
   }
 
-  board.tiles.push(createTile('boss', bossPosition.x, bossPosition.y, board.turn + board.tiles.length + 99));
+  const victim = candidates[Math.floor(random() * candidates.length)];
+  board.tiles = board.tiles.filter((tile) => tile.id !== victim.id);
+
+  return { x: victim.x, y: victim.y };
 }
 
 function scheduleBossAttack(board: BoardState, random: () => number = mulberry32(hashString(`${board.seed}:boss-schedule:${board.turn}`))): void {
-  board.bossAttackCountdown = 4;
+  board.bossAttackCountdown = BOSS_ATTACK_INTERVAL;
   board.bossAttackAxis = random() > 0.5 ? 'row' : 'column';
   board.bossAttackLine = Math.floor(random() * BOARD_SIZE);
 }
 
-function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
-  const boss = [...tiles.values()].find((tile) => tile.kind === 'boss');
-  const hero = [...tiles.values()].find((tile) => tile.kind === 'hero');
+/**
+ * The boss sweeps a full row or column: the hero takes damage if caught in it, and every
+ * empty cell along the line is walled off with woven stone. Mutates `board.tiles` in place so
+ * tile identity (and therefore any renderer-side animation state) survives the attack.
+ */
+function bossWeaveAttack(board: BoardState, messages: string[]): void {
+  const boss = board.tiles.find((tile) => tile.kind === 'boss');
+  const hero = board.tiles.find((tile) => tile.kind === 'hero');
 
   if (!boss) {
     return;
@@ -480,13 +576,19 @@ function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
 
   const attackIsRow = board.bossAttackAxis === 'row';
   const energyLine = board.bossAttackLine;
+  const heroIsCaught = hero !== undefined
+    && ((attackIsRow && hero.y === energyLine) || (!attackIsRow && hero.x === energyLine));
 
-  if (hero && ((attackIsRow && hero.y === energyLine) || (!attackIsRow && hero.x === energyLine))) {
-    hero.hp -= 2;
+  if (hero && heroIsCaught) {
+    const weaveDamage = Math.max(1, BOSS_WEAVE_DAMAGE - hero.block);
+    hero.hp -= weaveDamage;
+    messages.push(`The weave lashes you for ${weaveDamage}!`);
 
     if (hero.hp <= 0) {
       board.status = 'defeat';
     }
+  } else {
+    messages.push('Stone floods the weave line.');
   }
 
   for (let index = 0; index < BOARD_SIZE; index += 1) {
@@ -497,10 +599,10 @@ function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
       continue;
     }
 
-    const occupied = [...tiles.values()].find((tile) => tile.x === x && tile.y === y);
+    const occupied = board.tiles.some((tile) => tile.x === x && tile.y === y);
 
     if (!occupied) {
-      tiles.set(`stone-${board.turn}-${index}`, {
+      board.tiles.push({
         id: `stone-${board.turn}-${index}`,
         kind: 'rock',
         x,
@@ -513,20 +615,6 @@ function bossWeaveAttack(board: BoardState, tiles: Map<string, Tile>): void {
       });
     }
   }
-}
-
-function findFallbackBossPosition(tiles: Tile[]): { x: number; y: number } | undefined {
-  for (let y = 0; y < BOARD_SIZE; y += 1) {
-    for (let x = 0; x < BOARD_SIZE; x += 1) {
-      const isOccupied = tiles.some((tile) => tile.x === x && tile.y === y);
-
-      if (!isOccupied) {
-        return { x, y };
-      }
-    }
-  }
-
-  return undefined;
 }
 
 function findSpellTarget(board: BoardState, hero: Tile): Tile | undefined {
@@ -560,19 +648,38 @@ function findSpellTarget(board: BoardState, hero: Tile): Tile | undefined {
   return undefined;
 }
 
-function applyLevelUps(board: BoardState, hero: Tile): void {
-  // XP threshold scales per level: 100, 120, 140, … so hero doesn't outpace enemies indefinitely
-  let xpNeeded = 100 + (board.heroLevel - 1) * 20;
+/** Applies every level-up the current XP total earns. Returns true if the hero gained at least one level. */
+function applyLevelUps(board: BoardState, hero: Tile): boolean {
+  let xpNeeded = xpForNextLevel(board.heroLevel);
+  let leveled = false;
 
   while (board.xp >= xpNeeded) {
     board.xp -= xpNeeded;
     board.heroLevel += 1;
-    board.heroMaxHp += 2;
+    board.heroMaxHp += LEVEL_UP_MAX_HP;
     hero.attack += 1;
-    hero.block += 1;
-    hero.hp = Math.min(board.heroMaxHp, hero.hp + 3);
+    // Block only every other level. At +1 per level it outran every enemy's attack within three
+    // kills and the hero stopped taking damage entirely.
+    if (board.heroLevel % 2 === 0) {
+      hero.block += 1;
+    }
+
+    hero.hp = Math.min(board.heroMaxHp, hero.hp + LEVEL_UP_HEAL);
+    // Each level grants a charge, so banking several levels at once banks several charges
     board.spellCharges = Math.min(board.spellMaxCharges, board.spellCharges + 1);
+    leveled = true;
     // Recompute threshold for the new level
-    xpNeeded = 100 + (board.heroLevel - 1) * 20;
+    xpNeeded = xpForNextLevel(board.heroLevel);
   }
+
+  return leveled;
+}
+
+/**
+ * XP needed to leave `heroLevel`: 20, 32, 44, 56, … Tuned against the ~18 turns a Quest run gives
+ * you before the boss and the 12–15 XP an enemy is worth — the old 100-and-up curve meant a Quest
+ * hero met the Stone-Weaver still at level 1, dealing 1 damage a swing, which was unwinnable.
+ */
+export function xpForNextLevel(heroLevel: number): number {
+  return 20 + (heroLevel - 1) * 12;
 }

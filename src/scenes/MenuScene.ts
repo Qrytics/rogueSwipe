@@ -1,13 +1,39 @@
 import Phaser from 'phaser';
-import { dailySeed } from '../game/random';
 import { getCloudIdentityLabel, hasCloudSync, syncMetaProgressToCloud } from '../game/cloud';
+import { dailySeed } from '../game/random';
 import { loadActiveRun, loadLeaderboard, loadMetaProgress } from '../game/persistence';
+import { ANIMATION, COLORS, INK, SPACING, TYPOGRAPHY } from '../game/theme';
+import { cascadeIn, createButton } from './ui';
 import type { GameMode, RunConfig } from '../game/types';
 
 const MENU_WIDTH = 768;
 const MENU_HEIGHT = 1365;
+const CENTER_X = MENU_WIDTH / 2;
+
+const CONTENT_TOP = 56;
+
+const LEADERBOARD_ROW_HEIGHT = 24;
+const LEADERBOARD_MAX_ROWS = 5;
+
+const PANEL_WIDTH = 610;
+const PANEL_HEIGHT = 150;
+/** Preferred centre-to-centre distance; compressed toward PANEL_HEIGHT when space is tight. */
+const PANEL_SPACING = 176;
+const PANEL_MIN_GAP = 12;
+const PANEL_BORDER = 4;
+/** Panel content offsets from the panel's centre. */
+const PANEL_TITLE_OFFSET_Y = -42;
+const PANEL_SUBTITLE_OFFSET_Y = 4;
+const PANEL_ACTION_OFFSET_Y = 52;
+/** Reserved for the two footer hint lines at the bottom of the screen. */
+const FOOTER_RESERVED = 170;
+/** Hover swell. Smaller than a button press dip, because a 610px panel magnifies any scale change. */
+const PANEL_HOVER_SCALE = 1.015;
 
 export class MenuScene extends Phaser.Scene {
+  /** Top edge of the next element in the vertical flow. */
+  private cursorY = CONTENT_TOP;
+
   constructor() {
     super('MenuScene');
   }
@@ -16,112 +42,148 @@ export class MenuScene extends Phaser.Scene {
     const meta = loadMetaProgress();
     const activeRun = loadActiveRun();
     const leaderboard = loadLeaderboard();
-    let statusText: Phaser.GameObjects.Text | null = null;
 
-    this.cameras.main.setBackgroundColor('#08131c');
+    this.cursorY = CONTENT_TOP;
+    this.cameras.main.setBackgroundColor(COLORS.background.primary);
 
-    this.add.text(MENU_WIDTH / 2, 90, 'Rogue Swipe', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '56px',
-      color: '#f2f6ff',
-      stroke: '#000000',
-      strokeThickness: 8
-    }).setOrigin(0.5);
+    this.stack(this.add.text(CENTER_X, 0, 'Rogue Swipe', {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.giant,
+      color: INK.title,
+      stroke: INK.onTile.outline,
+      strokeThickness: TYPOGRAPHY.stroke.bold
+    }), SPACING.md);
 
-    this.add.text(MENU_WIDTH / 2, 160, 'Swipe to step one tile at a time, survive the run, and chase the leaderboard.', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '20px',
-      color: '#b4c4d9',
+    this.stack(this.add.text(CENTER_X, 0, 'Swipe to step one tile at a time, survive the run, and chase the leaderboard.', {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.md,
+      color: INK.muted,
       align: 'center',
       wordWrap: { width: 560 }
-    }).setOrigin(0.5);
+    }), SPACING.md);
 
-    this.add.text(MENU_WIDTH / 2, 210, `Vault Gold ${meta.bankedGold}   Best Run ${meta.bestTurnsSurvived} turns`, {
-      fontFamily: 'Georgia, serif',
-      fontSize: '18px',
-      color: '#d8e4f7'
-    }).setOrigin(0.5);
+    this.stack(this.add.text(CENTER_X, 0, `Vault Gold ${meta.bankedGold}   Best Run ${meta.bestTurnsSurvived} turns`, {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.base,
+      color: INK.body
+    }), SPACING.xs);
 
-    statusText = this.add.text(MENU_WIDTH / 2, 244, hasCloudSync()
+    const statusText = this.stack(this.add.text(CENTER_X, 0, hasCloudSync()
       ? `Cloud ready as ${getCloudIdentityLabel()}`
       : 'Cloud sync unavailable. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable it.', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '16px',
-      color: hasCloudSync() ? '#9fe7b4' : '#e7c79f',
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.sm,
+      color: hasCloudSync() ? INK.status.ok : INK.status.warn,
       align: 'center',
       wordWrap: { width: 640 }
-    }).setOrigin(0.5);
+    }), SPACING.xs);
 
-    const cloudButton = this.add.text(MENU_WIDTH / 2, 280, 'Sync Cloud Save', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '18px',
-      color: '#16202d',
-      backgroundColor: '#d8e4f7',
-      padding: { left: 18, right: 18, top: 10, bottom: 10 }
-    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+    const cloudButton = this.stack(
+      createButton(this, CENTER_X, 0, 'Sync Cloud Save', {
+        variant: 'neutral',
+        fontSize: TYPOGRAPHY.size.base
+      }),
+      activeRun ? SPACING.xs : SPACING.xl
+    );
 
     cloudButton.on('pointerdown', async () => {
       cloudButton.disableInteractive();
-      statusText?.setText('Syncing cloud save...');
+      statusText.setText('Syncing cloud save...');
 
       const result = await syncMetaProgressToCloud(meta);
-      statusText?.setText(result.message);
+      statusText.setText(result.message);
 
       cloudButton.setInteractive({ useHandCursor: true });
     });
 
     if (activeRun) {
-      const resumeButton = this.add.text(MENU_WIDTH / 2, 320, `Resume ${activeRun.runConfig.title}  Turn ${activeRun.board.turn}`, {
-        fontFamily: 'Georgia, serif',
-        fontSize: '20px',
-        color: '#18311f',
-        backgroundColor: '#c7e3d1',
-        padding: { left: 18, right: 18, top: 12, bottom: 12 }
-      }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+      const resumeButton = this.stack(
+        createButton(this, CENTER_X, 0, `Resume ${activeRun.runConfig.title}  Turn ${activeRun.board.turn}`, {
+          variant: 'spell',
+          fontSize: TYPOGRAPHY.size.md
+        }),
+        SPACING.xl
+      );
 
       resumeButton.on('pointerdown', () => {
         this.scene.start('GameScene', { resumeRun: activeRun });
       });
     }
 
-    this.add.text(MENU_WIDTH / 2, 356, 'Top Scores', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '24px',
-      color: '#f2f6ff',
-      stroke: '#000000',
-      strokeThickness: 5
-    }).setOrigin(0.5);
+    this.stack(this.add.text(CENTER_X, 0, 'Top Scores', {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.xl,
+      color: INK.title,
+      stroke: INK.onTile.outline,
+      strokeThickness: TYPOGRAPHY.stroke.bold
+    }), SPACING.xs);
 
+    this.createLeaderboard(leaderboard);
+    this.createModePanels(meta);
+    this.createFooter();
+  }
+
+  /**
+   * Places a text object at the current flow position and advances the cursor past it. Every
+   * element in the menu is laid out this way: the previous fixed y-coordinates assumed a
+   * best-case stack, so the optional Resume button silently overlapped its neighbours.
+   */
+  private stack(text: Phaser.GameObjects.Text, gapAfter: number): Phaser.GameObjects.Text {
+    text.setOrigin(0.5, 0).setY(this.cursorY);
+    this.cursorY += text.displayHeight + gapAfter;
+
+    return text;
+  }
+
+  private createLeaderboard(leaderboard: ReturnType<typeof loadLeaderboard>): void {
     if (leaderboard.length === 0) {
-      this.add.text(MENU_WIDTH / 2, 392, 'No runs yet — play a mode below to get on the board!', {
-        fontFamily: 'Georgia, serif',
-        fontSize: '16px',
-        color: '#b4c4d9',
+      this.stack(this.add.text(CENTER_X, 0, 'No runs yet — play a mode below to get on the board!', {
+        fontFamily: TYPOGRAPHY.family,
+        fontSize: TYPOGRAPHY.size.sm,
+        color: INK.muted,
         align: 'center',
         wordWrap: { width: 520 }
-      }).setOrigin(0.5);
-    } else {
-      const shownEntries = leaderboard.slice(0, 5);
-      shownEntries.forEach((entry, index) => {
-        const victoryMark = entry.victory ? ' ✓' : ' ✗';
-        const modeBadge = entry.mode === 'quest' ? '[Q]' : entry.mode === 'daily' ? '[D]' : '[∞]';
-        const line = `${index + 1}. ${modeBadge} ${entry.score}  Lv${entry.level}  ${entry.turns}t${victoryMark}`;
-        this.add.text(MENU_WIDTH / 2, 384 + index * 24, line, {
-          fontFamily: 'Georgia, serif',
-          fontSize: '16px',
-          color: entry.victory ? '#9fe7b4' : '#d8e4f7'
-        }).setOrigin(0.5);
-      });
+      }), SPACING.xl);
 
-      if (leaderboard.length > 5) {
-        this.add.text(MENU_WIDTH / 2, 384 + 5 * 24, `+${leaderboard.length - 5} more runs`, {
-          fontFamily: 'Georgia, serif',
-          fontSize: '14px',
-          color: '#8aa0b9'
-        }).setOrigin(0.5);
-      }
+      return;
     }
 
+    const shownEntries = leaderboard.slice(0, LEADERBOARD_MAX_ROWS);
+    const hasMore = leaderboard.length > LEADERBOARD_MAX_ROWS;
+    const rowsTop = this.cursorY;
+
+    shownEntries.forEach((entry, index) => {
+      const victoryMark = entry.victory ? ' ✓' : ' ✗';
+      const modeBadge = entry.mode === 'quest' ? '[Q]' : entry.mode === 'daily' ? '[D]' : '[∞]';
+
+      this.add.text(
+        CENTER_X,
+        rowsTop + index * LEADERBOARD_ROW_HEIGHT,
+        `${index + 1}. ${modeBadge} ${entry.score}  Lv${entry.level}  ${entry.turns}t${victoryMark}`,
+        {
+          fontFamily: TYPOGRAPHY.family,
+          fontSize: TYPOGRAPHY.size.sm,
+          color: entry.victory ? INK.status.ok : INK.body
+        }
+      ).setOrigin(0.5, 0);
+    });
+
+    this.cursorY = rowsTop + shownEntries.length * LEADERBOARD_ROW_HEIGHT;
+
+    if (hasMore) {
+      this.stack(this.add.text(CENTER_X, 0, `+${leaderboard.length - LEADERBOARD_MAX_ROWS} more runs`, {
+        fontFamily: TYPOGRAPHY.family,
+        fontSize: TYPOGRAPHY.size.xs,
+        color: INK.faint
+      }), SPACING.xl);
+
+      return;
+    }
+
+    this.cursorY += SPACING.xl;
+  }
+
+  private createModePanels(meta: ReturnType<typeof loadMetaProgress>): void {
     const options = [
       {
         mode: 'quest',
@@ -137,7 +199,9 @@ export class MenuScene extends Phaser.Scene {
         mode: 'daily',
         title: 'Daily Run',
         subtitle: 'Everyone shares the same seed for the day.',
-        seed: `daily:${dailySeed()}`,
+        // Placeholder — the real seed is computed at launch time so a menu left open across
+        // midnight still starts the correct day's run
+        seed: 'daily:pending',
         progressTarget: 100,
         progressPerTurn: 8,
         spawnsPerTurn: 1,
@@ -155,62 +219,97 @@ export class MenuScene extends Phaser.Scene {
       }
     ] satisfies Array<{ mode: GameMode; title: string; subtitle: string; seed: string; progressTarget: number; progressPerTurn: number; spawnsPerTurn: number; bossHp: number }>;
 
-    const panelTop = 500;
+    // Fit the panel block into whatever space is left between the flow cursor and the footer. A
+    // full leaderboard pushes the cursor down, so the spacing compresses rather than letting the
+    // last panel run over the footer text.
+    const available = MENU_HEIGHT - FOOTER_RESERVED - this.cursorY;
+    const spacing = options.length > 1
+      ? Math.min(PANEL_SPACING, Math.max(PANEL_HEIGHT + PANEL_MIN_GAP, (available - PANEL_HEIGHT) / (options.length - 1)))
+      : PANEL_SPACING;
+    const blockHeight = (options.length - 1) * spacing + PANEL_HEIGHT;
+    const firstCentre = this.cursorY + Math.max(0, (available - blockHeight) / 2) + PANEL_HEIGHT / 2;
 
-    options.forEach((option, index) => {
-      const y = panelTop + index * 220;
-      const background = this.add.rectangle(MENU_WIDTH / 2, y, 610, 170, 0xd8e4f7, 1).setStrokeStyle(4, 0x6f84a1, 1);
-      const title = this.add.text(MENU_WIDTH / 2, y - 32, option.title, {
-        fontFamily: 'Georgia, serif',
-        fontSize: '34px',
-        color: '#15202d'
+    const panels = options.map((option, index) => {
+      const y = firstCentre + index * spacing;
+
+      // The panel's parts live in a Container so hover and press can transform the whole card at
+      // once. The hit area stays outside it, in world space, since it is not part of the visual.
+      const background = this.add.rectangle(0, 0, PANEL_WIDTH, PANEL_HEIGHT, COLORS.menuPanel.fill, 1)
+        .setStrokeStyle(PANEL_BORDER, COLORS.menuPanel.stroke, 1);
+      const title = this.add.text(0, PANEL_TITLE_OFFSET_Y, option.title, {
+        fontFamily: TYPOGRAPHY.family,
+        fontSize: TYPOGRAPHY.size.display,
+        color: INK.onPanel.title
       }).setOrigin(0.5);
-      const subtitle = this.add.text(MENU_WIDTH / 2, y + 18, option.subtitle, {
-        fontFamily: 'Georgia, serif',
-        fontSize: '18px',
-        color: '#314356',
+      const subtitle = this.add.text(0, PANEL_SUBTITLE_OFFSET_Y, option.subtitle, {
+        fontFamily: TYPOGRAPHY.family,
+        fontSize: TYPOGRAPHY.size.base,
+        color: INK.onPanel.muted,
         align: 'center',
         wordWrap: { width: 500 }
       }).setOrigin(0.5);
-      const buttonLabel = this.add.text(MENU_WIDTH / 2, y + 64, 'Tap to play', {
-        fontFamily: 'Georgia, serif',
-        fontSize: '20px',
-        color: '#234a2d'
+      const action = this.add.text(0, PANEL_ACTION_OFFSET_Y, 'Tap to play', {
+        fontFamily: TYPOGRAPHY.family,
+        fontSize: TYPOGRAPHY.size.md,
+        color: INK.onPanel.accent
       }).setOrigin(0.5);
 
-      const hitArea = this.add.zone(MENU_WIDTH / 2, y, 610, 170).setInteractive({ useHandCursor: true });
-      hitArea.on('pointerdown', () => {
-        this.scene.start('GameScene', {
-          runConfig: option as RunConfig,
-          metaProgress: meta
+      const panel = this.add.container(CENTER_X, y, [background, title, subtitle, action]);
+      const hitArea = this.add.zone(CENTER_X, y, PANEL_WIDTH, PANEL_HEIGHT).setInteractive({ useHandCursor: true });
+
+      hitArea.on('pointerover', () => {
+        background.setFillStyle(COLORS.menuPanel.fillHover, 1);
+        this.tweens.add({
+          targets: panel,
+          scale: PANEL_HOVER_SCALE,
+          duration: ANIMATION.fast,
+          ease: ANIMATION.fadeEase
         });
       });
 
-      hitArea.on('pointerover', () => {
-        background.setFillStyle(0xe9f1ff, 1);
-        title.setColor('#0f1720');
-        subtitle.setColor('#203041');
-        buttonLabel.setColor('#1d6b35');
+      hitArea.on('pointerout', () => {
+        background.setFillStyle(COLORS.menuPanel.fill, 1);
+        this.tweens.add({
+          targets: panel,
+          scale: 1,
+          duration: ANIMATION.fast,
+          ease: ANIMATION.fadeEase
+        });
       });
 
-      hitArea.on('pointerout', () => {
-        background.setFillStyle(0xd8e4f7, 1);
-        title.setColor('#15202d');
-        subtitle.setColor('#314356');
-        buttonLabel.setColor('#234a2d');
+      hitArea.on('pointerdown', () => {
+        this.tweens.add({
+          targets: panel,
+          scale: ANIMATION.pressScale,
+          duration: ANIMATION.press,
+          yoyo: true,
+          ease: ANIMATION.fadeEase
+        });
+
+        const runConfig: RunConfig = option.mode === 'daily'
+          ? { ...option, seed: `daily:${dailySeed()}` }
+          : { ...option };
+
+        this.scene.start('GameScene', { runConfig, metaProgress: meta });
       });
+
+      return panel;
     });
 
-    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 130, 'Every swipe moves your hero exactly one tile.', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '18px',
-      color: '#8aa0b9'
+    cascadeIn(this, panels, ANIMATION.stagger / 2);
+  }
+
+  private createFooter(): void {
+    this.add.text(CENTER_X, MENU_HEIGHT - 130, 'Every swipe moves your hero exactly one tile.', {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.base,
+      color: INK.faint
     }).setOrigin(0.5);
 
-    this.add.text(MENU_WIDTH / 2, MENU_HEIGHT - 96, 'Desktop: Arrow keys or WASD  ·  Escape to pause', {
-      fontFamily: 'Georgia, serif',
-      fontSize: '15px',
-      color: '#67809a'
+    this.add.text(CENTER_X, MENU_HEIGHT - 96, 'Desktop: Arrow keys or WASD  ·  Escape to pause', {
+      fontFamily: TYPOGRAPHY.family,
+      fontSize: TYPOGRAPHY.size.xs,
+      color: INK.fainter
     }).setOrigin(0.5);
   }
 }

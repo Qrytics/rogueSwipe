@@ -105,6 +105,27 @@ export class SoundEngine {
     this.playTone({ frequency: 140, type: 'sawtooth', duration: 0.4, gain: 0.25, frequency2: 80 });
   }
 
+  /** Dull thud for swiping into the edge of the board — a non-event, so it stays quiet and short. */
+  playWallBump(): void {
+    this.playTone({ frequency: 120, type: 'square', duration: 0.08, gain: 0.1 });
+  }
+
+  playWeb(): void {
+    this.playTone({ frequency: 180, type: 'triangle', duration: 0.15, gain: 0.16, frequency2: 90 });
+  }
+
+  playBossSpawn(): void {
+    this.playTone({ frequency: 80, type: 'sawtooth', duration: 0.6, gain: 0.26, frequency2: 55 });
+  }
+
+  playPause(): void {
+    this.playTone({ frequency: 440, type: 'sine', duration: 0.1, gain: 0.14 });
+  }
+
+  playDamageTaken(): void {
+    this.playTone({ frequency: 240, type: 'sawtooth', duration: 0.15, gain: 0.16, frequency2: 160 });
+  }
+
   playVictory(): void {
     const delays = [0, 140, 280, 460];
     const freqs = [440, 550, 660, 880];
@@ -121,15 +142,34 @@ export class SoundEngine {
     });
   }
 
-  /** Plays the right sound based on a turn result */
-  playFromTurnResult(result: { messages: string[]; acted: boolean }, status: string): void {
+  /**
+   * Plays the sounds a turn earned. There are two layers, because a single turn can be several
+   * events at once — killing a goblin, levelling up, and the boss winding up all in one swipe:
+   *
+   *   - one *primary* cue chosen from the action the player took, which is always `messages[0]`;
+   *   - any *secondary* cues from what the board did back, which the engine appends after it.
+   *
+   * `hpLost` comes from the scene comparing hero HP either side of the turn, since no message
+   * reliably reports it (the weave, a counter-attack and a boss strike all phrase it differently).
+   */
+  playFromTurnResult(result: { messages: string[]; acted: boolean }, status: string, hpLost = false): void {
     if (status === 'victory' || status === 'defeat') {
       return; // handled by showEndState
     }
 
     const msg = result.messages[0] ?? '';
 
-    if (msg.includes('gold')) {
+    if (!result.acted) {
+      // The turn never happened — a wall, or a spell with no charges left
+      if (msg.includes('wall')) {
+        this.playWallBump();
+      }
+      return;
+    }
+
+    if (msg.includes('web')) {
+      this.playWeb();
+    } else if (msg.includes('gold')) {
       this.playGoldPickup();
     } else if (msg.includes('Level up')) {
       this.playLevelUp();
@@ -139,8 +179,19 @@ export class SoundEngine {
       this.playEnemyDeath();
     } else if (msg.includes('strike') || msg.includes('hit') || msg.includes('for')) {
       this.playHit();
-    } else if (result.acted) {
+    } else {
       this.playMove();
+    }
+
+    // Secondary cues, layered a beat later so they read as a response rather than one muddy chord
+    const rest = result.messages.slice(1);
+
+    if (rest.some((entry) => entry.includes('awakens'))) {
+      setTimeout(() => this.playBossSpawn(), 180);
+    } else if (rest.some((entry) => entry.includes('weave'))) {
+      setTimeout(() => this.playBossAttack(), 180);
+    } else if (hpLost) {
+      setTimeout(() => this.playDamageTaken(), 120);
     }
   }
 

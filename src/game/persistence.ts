@@ -5,6 +5,10 @@ const LEGACY_STORAGE_KEYS = ['rogueSwipe.save.v3', 'rogueSwipe.save.v2', 'rogueS
 const CURRENT_SCHEMA_VERSION = 4;
 const LEADERBOARD_KEY = 'rogueSwipe.leaderboard.v1';
 const MAX_LEADERBOARD_ENTRIES = 10;
+/** Identical entries recorded within this window are treated as one accidental double-submission. */
+const DUPLICATE_WINDOW_MS = 5_000;
+/** Ceiling on permanent meta bonuses so long-time players don't become unkillable. */
+const MAX_PERMANENT_BONUS = 5;
 
 const DEFAULT_META: PersistentProgress = {
   bankedGold: 0,
@@ -93,12 +97,20 @@ export function loadLeaderboard(): LeaderboardEntry[] {
 export function recordLeaderboardEntry(entry: Omit<LeaderboardEntry, 'id' | 'createdAt'>): LeaderboardEntry[] {
   const current = loadLeaderboard();
 
-  // Deduplicate: drop any entry with the same score+mode+turns to prevent double-submission on page refresh
-  const isDuplicate = current.some(
-    (existing) => existing.score === entry.score && existing.mode === entry.mode && existing.turns === entry.turns
-  );
+  // Deduplicate double-submissions (same run recorded twice on a refresh) without rejecting a
+  // genuine second run that happens to tie: identical entries only collide inside a short window.
+  const now = Date.now();
+  const isDoubleSubmission = current.some((existing) => {
+    if (existing.score !== entry.score || existing.mode !== entry.mode || existing.turns !== entry.turns) {
+      return false;
+    }
 
-  if (isDuplicate) {
+    const existingTime = Date.parse(existing.createdAt);
+
+    return Number.isFinite(existingTime) && Math.abs(now - existingTime) < DUPLICATE_WINDOW_MS;
+  });
+
+  if (isDoubleSubmission) {
     return current;
   }
 
@@ -124,8 +136,8 @@ export function recordRunCompletion(turnsSurvived: number, goldEarned: number, v
     bankedGold: current.bankedGold + goldEarned + (victory ? 15 : 0),
     completedRuns: current.completedRuns + 1,
     bestTurnsSurvived: Math.max(current.bestTurnsSurvived, turnsSurvived),
-    permanentMaxHpBonus: current.permanentMaxHpBonus + (victory ? 1 : 0),
-    permanentAttackBonus: current.permanentAttackBonus + (victory ? 1 : 0)
+    permanentMaxHpBonus: Math.min(MAX_PERMANENT_BONUS, current.permanentMaxHpBonus + (victory ? 1 : 0)),
+    permanentAttackBonus: Math.min(MAX_PERMANENT_BONUS, current.permanentAttackBonus + (victory ? 1 : 0))
   };
 
   saveMetaProgress(nextMeta);
@@ -145,8 +157,9 @@ function mergeMeta(meta: Partial<PersistentProgress> | undefined): PersistentPro
     bankedGold: meta?.bankedGold ?? DEFAULT_META.bankedGold,
     completedRuns: meta?.completedRuns ?? DEFAULT_META.completedRuns,
     bestTurnsSurvived: meta?.bestTurnsSurvived ?? DEFAULT_META.bestTurnsSurvived,
-    permanentMaxHpBonus: meta?.permanentMaxHpBonus ?? DEFAULT_META.permanentMaxHpBonus,
-    permanentAttackBonus: meta?.permanentAttackBonus ?? DEFAULT_META.permanentAttackBonus
+    // Clamp on read too, so saves written before the cap existed are brought back in line
+    permanentMaxHpBonus: Math.min(MAX_PERMANENT_BONUS, meta?.permanentMaxHpBonus ?? DEFAULT_META.permanentMaxHpBonus),
+    permanentAttackBonus: Math.min(MAX_PERMANENT_BONUS, meta?.permanentAttackBonus ?? DEFAULT_META.permanentAttackBonus)
   };
 }
 

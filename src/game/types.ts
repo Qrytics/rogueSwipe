@@ -88,7 +88,7 @@ export interface BoardState {
   status: RunStatus;
   seed: string;
   tiles: Tile[];
-  /** True when hero stepped into a web this turn — spawn cycle is skipped */
+  /** True when the turn that just resolved was spent tearing out of a web. Display only. */
   heroIsSlowed: boolean;
 }
 
